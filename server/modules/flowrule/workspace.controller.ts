@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Patch, Req } from '@nestjs/common';
+import { Body, Controller, Get, Put, Req } from '@nestjs/common';
 import { NeedLogin } from '@lark-apaas/fullstack-nestjs-core';
 import type { Request } from 'express';
 import { WorkspaceService } from './workspace.service';
@@ -19,7 +19,7 @@ export class WorkspaceController {
     return this.workspaceService.get();
   }
 
-  @Patch()
+  @Put()
   async update(@Req() req: Request, @Body() dto: WorkspaceSettingsDto) {
     return this.workspaceService.update(dto, req.userContext.userId);
   }

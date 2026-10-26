@@ -321,8 +321,12 @@ const RulesPage = () => {
   const query = useMemo(
     () => ({
       keyword: debouncedKeyword || undefined,
-      status: (statusFilter || undefined) as Rule['status'] | undefined,
-      type: (typeFilter || undefined) as Rule['type'] | undefined,
+      status:
+        statusFilter && statusFilter !== 'all'
+          ? (statusFilter as Rule['status'])
+          : undefined,
+      type:
+        typeFilter && typeFilter !== 'all' ? (typeFilter as Rule['type']) : undefined,
     }),
     [debouncedKeyword, statusFilter, typeFilter],
   );
