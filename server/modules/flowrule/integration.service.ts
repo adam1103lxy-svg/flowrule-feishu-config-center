@@ -177,7 +177,7 @@ curl -s -X POST "https://$FLOWRULE_BASE_URL/openapi/v1/simulate" \\
 Authorization: Bearer <miaoda-open-api-key>
 \`\`\`
 
-- API Key 由**应用管理员**在妙达平台「开放 API Key 管理」中创建并绑定本应用；
+- API Key 由**应用管理员**在妙搭平台「开放 API Key 管理」中创建并绑定本应用；
 - 原始 Key 仅创建时展示一次，请立即保存到你的密钥管理系统；丢失只能吊销后重建；
 - 本应用界面不管理、不存储任何 API Key；
 - 缺失、无效或已吊销的 Key 返回 401，不会回退到匿名访问。
@@ -186,7 +186,7 @@ Authorization: Bearer <miaoda-open-api-key>
 
 | 变量名 | 说明 | 示例 |
 | --- | --- | --- |
-| FLOWRULE_API_KEY | 妙达 Open API Key（Bearer 鉴权），由应用管理员在妙达平台创建 | 创建后自行填入（不内置示例值） |
+| FLOWRULE_API_KEY | 妙搭 Open API Key（Bearer 鉴权），由应用管理员在妙搭平台创建 | 创建后自行填入（不内置示例值） |
 | FLOWRULE_BASE_URL | 本平台服务地址 | https://flowrule.example.com |
 | FLOWRULE_PULL_INTERVAL_SEC | 配置拉取周期（秒，建议 ≥ 连接器扫描周期） | 300 |
 | FLOWRULE_TASK_API_BASE | 接入方任务 API 基础地址 | https://tasks.example.com |
