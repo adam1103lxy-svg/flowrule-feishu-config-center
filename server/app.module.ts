@@ -3,6 +3,7 @@ import { Module } from '@nestjs/common';
 import { PlatformModule } from '@lark-apaas/fullstack-nestjs-core';
 
 import { GlobalExceptionFilter } from './common/filters/exception.filter';
+import { FlowRuleModule } from './modules/flowrule/flowrule.module';
 import { ViewModule } from './modules/view/view.module';
 
 @Module({
@@ -11,6 +12,7 @@ import { ViewModule } from './modules/view/view.module';
     PlatformModule.forRoot(),
     // ====== @route-section: business-modules START ======
     // Place all business modules here.Do NOT add fallback modules here.
+    FlowRuleModule,
     // ====== @route-section: business-modules END ======
 
     // ⚠️ @route-order: last

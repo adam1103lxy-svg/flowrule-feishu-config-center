@@ -1,7 +1,7 @@
 /* eslint-disable */
 /** auto generated, do not edit */
-import { customType } from "drizzle-orm/pg-core";
-import { sql } from "drizzle-orm";
+import { sql } from 'drizzle-orm';
+import { boolean, index, integer, pgTable, text, uuid, varchar, customType } from "drizzle-orm/pg-core"
 
 export const customTimestamptz = customType<{
   data: Date;
@@ -117,3 +117,141 @@ export const fileAttachmentArray = customType<{
   },
 });
 
+export const auditLog = pgTable("audit_log", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  action: varchar("action", { length: 32 }).notNull(),
+  entityType: varchar("entity_type", { length: 20 }).notNull(),
+  entityId: varchar("entity_id", { length: 64 }).notNull(),
+  entityName: varchar("entity_name", { length: 100 }).notNull(),
+  summary: text("summary").notNull(),
+  detail: text("detail").notNull(),
+  isDemo: boolean("is_demo").notNull().default(false),
+  // System field: Creation time (auto-filled, do not modify)
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Creator (auto-filled, do not modify)
+  createdBy: userProfile("_created_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+  // System field: Update time (auto-filled, do not modify)
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Updater (auto-filled, do not modify)
+  updatedBy: userProfile("_updated_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+}, (table) => [
+  index("idx_audit_log_created").on(table.createdAt),
+]);
+
+export const simulationRun = pgTable("simulation_run", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  ruleId: uuid("rule_id").notNull(),
+  ruleName: varchar("rule_name", { length: 100 }).notNull(),
+  ruleVersionLabel: varchar("rule_version_label", { length: 32 }).notNull(),
+  input: text("input").notNull(),
+  result: text("result").notNull(),
+  isDemo: boolean("is_demo").notNull().default(false),
+  // System field: Creation time (auto-filled, do not modify)
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Creator (auto-filled, do not modify)
+  createdBy: userProfile("_created_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+  // System field: Update time (auto-filled, do not modify)
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Updater (auto-filled, do not modify)
+  updatedBy: userProfile("_updated_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+}, (table) => [
+  index("idx_simulation_run_rule").on(table.ruleId),
+]);
+
+export const ruleVersion = pgTable("rule_version", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  ruleId: uuid("rule_id").notNull(),
+  version: integer("version").notNull(),
+  config: text("config").notNull(),
+  changelog: text("changelog").notNull(),
+  // System field: Creation time (auto-filled, do not modify)
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Creator (auto-filled, do not modify)
+  createdBy: userProfile("_created_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+  // System field: Update time (auto-filled, do not modify)
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Updater (auto-filled, do not modify)
+  updatedBy: userProfile("_updated_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+}, (table) => [
+  index("idx_rule_version_rule").on(table.ruleId),
+]);
+
+export const rule = pgTable("rule", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: varchar("name", { length: 100 }).notNull(),
+  code: varchar("code", { length: 64 }).notNull(),
+  description: text("description").notNull(),
+  type: varchar("type", { length: 32 }).notNull().default('custom'),
+  status: varchar("status", { length: 20 }).notNull().default('draft'),
+  currentVersion: integer("current_version").notNull().default(0),
+  config: text("config").notNull().default('{}'),
+  // System field: Creation time (auto-filled, do not modify)
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Creator (auto-filled, do not modify)
+  createdBy: userProfile("_created_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+  // System field: Update time (auto-filled, do not modify)
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Updater (auto-filled, do not modify)
+  updatedBy: userProfile("_updated_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+}, (table) => [
+  index("idx_rule_status").on(table.status),
+]);
+
+export const connector = pgTable("connector", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: varchar("name", { length: 100 }).notNull(),
+  environment: varchar("environment", { length: 20 }).notNull().default('prod'),
+  feishuAppId: varchar("feishu_app_id", { length: 64 }).notNull(),
+  secretSet: boolean("secret_set").notNull().default(false),
+  sourceGroups: text("source_groups").array().notNull().default([]),
+  notifyGroups: text("notify_groups").array().notNull().default([]),
+  timezone: varchar("timezone", { length: 64 }).notNull().default('Asia/Shanghai'),
+  ownerSource: varchar("owner_source", { length: 20 }).notNull().default('contact'),
+  scanPeriodMinutes: integer("scan_period_minutes").notNull().default(5),
+  status: varchar("status", { length: 20 }).notNull().default('active'),
+  // System field: Creation time (auto-filled, do not modify)
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Creator (auto-filled, do not modify)
+  createdBy: userProfile("_created_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+  // System field: Update time (auto-filled, do not modify)
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Updater (auto-filled, do not modify)
+  updatedBy: userProfile("_updated_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+});
+
+export const workspace = pgTable("workspace", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: varchar("name", { length: 100 }).notNull(),
+  defaultTimezone: varchar("default_timezone", { length: 64 }).notNull().default('Asia/Shanghai'),
+  defaultScanPeriodMinutes: integer("default_scan_period_minutes").notNull().default(5),
+  pendingConfirmPolicy: varchar("pending_confirm_policy", { length: 255 }).notNull().default('manual'),
+  securityNote: text("security_note").notNull(),
+  // System field: Creation time (auto-filled, do not modify)
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Creator (auto-filled, do not modify)
+  createdBy: userProfile("_created_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+  // System field: Update time (auto-filled, do not modify)
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Updater (auto-filled, do not modify)
+  updatedBy: userProfile("_updated_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+});
+
+// table aliases
+export const auditLogTable = auditLog;
+export const connectorTable = connector;
+export const ruleTable = rule;
+export const ruleVersionTable = ruleVersion;
+export const simulationRunTable = simulationRun;
+export const workspaceTable = workspace;

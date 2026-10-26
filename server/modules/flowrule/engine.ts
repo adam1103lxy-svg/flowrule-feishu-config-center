@@ -1,0 +1,550 @@
+import {
+  CONDITION_TYPE_LABELS,
+  DEDUP_FIELD_LABELS,
+  NOTIFY_TARGET_TYPE_LABELS,
+  TIMING_MODE_LABELS,
+  type AssignerMode,
+  type Rule,
+  type RuleCondition,
+  type RuleConditionGroup,
+  type RuleConfig,
+  type SimulationInput,
+  type SimulationResult,
+  type SimulationTraceStep,
+  type TimingConfig,
+  type ValidationResult,
+  type DedupField,
+} from '@shared/api.interface';
+
+const asString = (v: unknown, fallback = ''): string =>
+  typeof v === 'string' ? v : fallback;
+
+const asNumber = (v: unknown, fallback = 0): number =>
+  typeof v === 'number' && Number.isFinite(v) ? v : fallback;
+
+const asStringArray = (v: unknown): string[] =>
+  Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+
+const asGroup = (v: unknown): RuleConditionGroup => {
+  const raw = typeof v === 'object' && v !== null ? (v as Record<string, unknown>) : {};
+  const rawConditions = Array.isArray(raw.conditions) ? raw.conditions : [];
+  return {
+    match: raw.match === 'any' ? 'any' : 'all',
+    conditions: rawConditions
+      .filter((c): c is Record<string, unknown> => typeof c === 'object' && c !== null)
+      .map((c) => ({
+        type: asString(c.type) as RuleCondition['type'],
+        keywords: asStringArray(c.keywords),
+        pattern: typeof c.pattern === 'string' ? c.pattern : undefined,
+        senderRole: typeof c.senderRole === 'string' ? (c.senderRole as RuleCondition['senderRole']) : undefined,
+        messageType: typeof c.messageType === 'string' ? (c.messageType as RuleCondition['messageType']) : undefined,
+        replyDepth: typeof c.replyDepth === 'number' ? c.replyDepth : undefined,
+      })),
+  };
+};
+
+const asTiming = (v: unknown): TimingConfig => {
+  const raw = typeof v === 'object' && v !== null ? (v as Record<string, unknown>) : {};
+  return {
+    mode: asString(raw.mode, 'immediate') as TimingConfig['mode'],
+    delayMinutes:
+      typeof raw.delayMinutes === 'number' ? raw.delayMinutes : undefined,
+    fixedTime: typeof raw.fixedTime === 'string' ? raw.fixedTime : undefined,
+  };
+};
+
+export const normalizeRuleConfig = (raw: unknown): RuleConfig => {
+  const src = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {};
+  const assigneeRaw =
+    typeof src.assignee === 'object' && src.assignee !== null
+      ? (src.assignee as Record<string, unknown>)
+      : null;
+  const externalMapRaw = Array.isArray(assigneeRaw?.externalMap)
+    ? assigneeRaw.externalMap
+    : [];
+  const extractionRaw =
+    typeof src.extraction === 'object' && src.extraction !== null
+      ? (src.extraction as Record<string, unknown>)
+      : null;
+  const notifyRaw = Array.isArray(src.notifyTargets) ? src.notifyTargets : [];
+  return {
+    sourceConnectorId:
+      typeof src.sourceConnectorId === 'string' ? src.sourceConnectorId : null,
+    sourceGroups: asStringArray(src.sourceGroups),
+    trigger: asGroup(src.trigger),
+    exclusions: asGroup(src.exclusions),
+    extraction: extractionRaw
+      ? {
+          objectLabel:
+            typeof extractionRaw.objectLabel === 'string'
+              ? extractionRaw.objectLabel
+              : undefined,
+          objectPattern: asString(extractionRaw.objectPattern),
+          versionPattern:
+            typeof extractionRaw.versionPattern === 'string'
+              ? extractionRaw.versionPattern
+              : undefined,
+        }
+      : null,
+    assignee: assigneeRaw
+      ? {
+          mode: asString(assigneeRaw.mode, 'sender') as AssignerMode,
+          staticUsers: assigneeRaw.staticUsers
+            ? asStringArray(assigneeRaw.staticUsers)
+            : undefined,
+          externalMap: externalMapRaw
+            .filter(
+              (m): m is Record<string, unknown> =>
+                typeof m === 'object' && m !== null,
+            )
+            .map((m) => ({ key: asString(m.key), user: asString(m.user) })),
+          fallback:
+            typeof assigneeRaw.fallback === 'string'
+              ? assigneeRaw.fallback
+              : undefined,
+        }
+      : null,
+    timing: asTiming(src.timing),
+    taskTitleTemplate: asString(src.taskTitleTemplate),
+    taskDescTemplate: asString(src.taskDescTemplate),
+    notifyTargets: notifyRaw
+      .filter(
+        (t): t is Record<string, unknown> => typeof t === 'object' && t !== null,
+      )
+      .map((t) => ({
+        type: asString(t.type) as 'source_group' | 'notify_group' | 'user',
+        value: typeof t.value === 'string' ? t.value : undefined,
+      })),
+    dedupFields: asStringArray(src.dedupFields) as DedupField[],
+    cancelWords: asStringArray(src.cancelWords),
+    cancelScope: asString(src.cancelScope, 'rule') as 'rule' | 'object',
+    failureAction: asString(src.failureAction, 'pending_confirm') as
+      | 'pending_confirm'
+      | 'drop',
+    retryCount: asNumber(src.retryCount, 0),
+  };
+};
+
+/* ===== 正则提取 ===== */
+
+const extractByPattern = (
+  pattern: string,
+  text: string,
+): { value: string; error: string } => {
+  if (!pattern) return { value: '', error: '未配置' };
+  try {
+    const re = new RegExp(pattern);
+    const m = re.exec(text);
+    if (!m) return { value: '', error: '未匹配' };
+    return { value: m[1] ?? m[0], error: '' };
+  } catch {
+    return { value: '', error: '正则表达式无效' };
+  }
+};
+
+/* ===== 条件评估 ===== */
+
+interface ConditionEval {
+  label: string;
+  passed: boolean;
+  detail: string;
+}
+
+const evaluateCondition = (
+  cond: RuleCondition,
+  input: SimulationInput,
+): ConditionEval => {
+  const label = CONDITION_TYPE_LABELS[cond.type] ?? cond.type;
+  switch (cond.type) {
+    case 'keyword': {
+      const keywords = cond.keywords ?? [];
+      if (keywords.length === 0)
+        return { label, passed: false, detail: '未配置关键词' };
+      const hit = keywords.find((k) => k && input.messageText.includes(k));
+      return {
+        label,
+        passed: Boolean(hit),
+        detail: hit
+          ? `消息包含关键词「${hit}」`
+          : `消息不包含关键词：${keywords.join('、')}`,
+      };
+    }
+    case 'regex': {
+      const pattern = cond.pattern ?? '';
+      if (!pattern) return { label, passed: false, detail: '未配置正则' };
+      try {
+        const re = new RegExp(pattern);
+        const passed = re.test(input.messageText);
+        return {
+          label,
+          passed,
+          detail: passed
+            ? `消息匹配正则 ${pattern}`
+            : `消息不匹配正则 ${pattern}`,
+        };
+      } catch {
+        return { label, passed: false, detail: `正则表达式无效：${pattern}` };
+      }
+    }
+    case 'sender_role': {
+      const role = cond.senderRole ?? 'any';
+      if (role === 'any')
+        return { label, passed: true, detail: '角色要求为任意，直接通过' };
+      const passed = input.senderRole === role;
+      return {
+        label,
+        passed,
+        detail: passed
+          ? `发送者角色为 ${role}，满足要求`
+          : `发送者角色为 ${input.senderRole}，要求 ${role}`,
+      };
+    }
+    case 'must_mention': {
+      const passed = input.mentions.length > 0;
+      return {
+        label,
+        passed,
+        detail: passed
+          ? `消息 @ 了 ${input.mentions.join('、')}`
+          : '消息未 @ 任何成员',
+      };
+    }
+    case 'message_type': {
+      const required = cond.messageType ?? 'any';
+      if (required === 'any')
+        return { label, passed: true, detail: '类型要求为任意，直接通过' };
+      const passed = input.messageType === required;
+      return {
+        label,
+        passed,
+        detail: passed
+          ? `消息类型为 ${required}，满足要求`
+          : `消息类型为 ${input.messageType}，要求 ${required}`,
+      };
+    }
+    case 'reply_depth': {
+      const required = cond.replyDepth ?? 0;
+      const passed = input.replyDepth >= required;
+      return {
+        label,
+        passed,
+        detail: passed
+          ? `回复链深度 ${input.replyDepth} ≥ 要求 ${required}`
+          : `回复链深度 ${input.replyDepth} < 要求 ${required}`,
+      };
+    }
+    default:
+      return { label, passed: false, detail: '未知条件类型' };
+  }
+};
+
+const evaluateGroup = (
+  group: RuleConditionGroup,
+  input: SimulationInput,
+): { matched: boolean; evals: ConditionEval[] } => {
+  const evals = group.conditions.map((c) => evaluateCondition(c, input));
+  if (group.conditions.length === 0) return { matched: false, evals };
+  const matched =
+    group.match === 'any'
+      ? evals.some((e) => e.passed)
+      : evals.every((e) => e.passed);
+  return { matched, evals };
+};
+
+/* ===== 执行时机 ===== */
+
+const getTimezoneOffsetMs = (date: Date, timezone: string): number => {
+  const utcStr = date.toLocaleString('en-US', { timeZone: 'UTC' });
+  const tzStr = date.toLocaleString('en-US', { timeZone: timezone });
+  return new Date(tzStr).getTime() - new Date(utcStr).getTime();
+};
+
+const computeRunAt = (
+  sentAt: Date,
+  timing: TimingConfig,
+  timezone: string,
+): { runAt: Date; detail: string } => {
+  if (timing.mode === 'relative_delay') {
+    const minutes = timing.delayMinutes ?? 0;
+    const runAt = new Date(sentAt.getTime() + minutes * 60_000);
+    return {
+      runAt,
+      detail: `相对延迟 ${minutes} 分钟，run_at = ${runAt.toISOString()}`,
+    };
+  }
+  if (timing.mode === 'fixed_next_day') {
+    const time = timing.fixedTime ?? '09:00';
+    const offset = getTimezoneOffsetMs(sentAt, timezone);
+    const wall = new Date(sentAt.getTime() + offset);
+    const [h, m] = time.split(':').map((x) => Number(x));
+    const target = new Date(wall);
+    target.setUTCHours(Number.isFinite(h) ? h : 9, Number.isFinite(m) ? m : 0, 0, 0);
+    if (target.getTime() <= wall.getTime()) {
+      target.setUTCDate(target.getUTCDate() + 1);
+    }
+    const runAt = new Date(target.getTime() - offset);
+    return {
+      runAt,
+      detail: `时区 ${timezone} 次日 ${time} 执行，run_at = ${runAt.toISOString()}`,
+    };
+  }
+  return { runAt: sentAt, detail: `立即执行，run_at = 消息时间 ${sentAt.toISOString()}` };
+};
+
+/* ===== 模板渲染 ===== */
+
+const renderTemplate = (
+  template: string,
+  vars: Record<string, string>,
+): string => {
+  let out = template;
+  for (const [key, value] of Object.entries(vars)) {
+    out = out.split(`{{${key}}}`).join(value);
+  }
+  return out;
+};
+
+/* ===== 模拟评估 ===== */
+
+export const simulateRule = (
+  rule: Rule,
+  input: SimulationInput,
+  timezone: string,
+): SimulationResult => {
+  const config = rule.config;
+  const trace: SimulationTraceStep[] = [];
+  const sentAt = new Date(input.sentAt);
+
+  const sourceOk =
+    config.sourceGroups.length === 0 || config.sourceGroups.includes(input.sourceGroup);
+  trace.push({
+    step: 'source',
+    label: '来源群匹配',
+    passed: sourceOk,
+    detail: sourceOk
+      ? `消息来自规则来源群「${input.sourceGroup}」`
+      : `消息群「${input.sourceGroup}」不在规则来源群：${config.sourceGroups.join('、') || '（未配置）'}`,
+  });
+
+  const trigger = evaluateGroup(config.trigger, input);
+  for (const e of trigger.evals) {
+    trace.push({
+      step: 'trigger',
+      label: `触发条件 · ${e.label}`,
+      passed: e.passed,
+      detail: e.detail,
+    });
+  }
+  const triggerLabel = config.trigger.match === 'any' ? '任一满足' : '全部满足';
+  trace.push({
+    step: 'trigger-group',
+    label: `触发条件组（${triggerLabel}）`,
+    passed: trigger.matched,
+    detail: trigger.matched
+      ? `条件组满足（${triggerLabel}）`
+      : `条件组不满足（${triggerLabel}）`,
+  });
+
+  const exclusion = evaluateGroup(config.exclusions, input);
+  for (const e of exclusion.evals) {
+    trace.push({
+      step: 'exclusion',
+      label: `排除条件 · ${e.label}`,
+      passed: null,
+      detail: `${e.passed ? '命中' : '未命中'}：${e.detail}`,
+    });
+  }
+  if (config.exclusions.conditions.length > 0) {
+    const exLabel = config.exclusions.match === 'any' ? '任一命中即排除' : '全部命中才排除';
+    trace.push({
+      step: 'exclusion-group',
+      label: `排除条件组（${exLabel}）`,
+      passed: null,
+      detail: exclusion.matched ? '命中排除条件，规则不触发' : '未命中排除条件',
+    });
+  }
+
+  const matched = sourceOk && trigger.matched && !exclusion.matched;
+
+  const extraction = extractByPattern(
+    config.extraction?.objectPattern ?? '',
+    input.messageText,
+  );
+  const version = extractByPattern(
+    config.extraction?.versionPattern ?? '',
+    input.messageText,
+  );
+  const objectKey = matched ? extraction.value : '';
+  trace.push({
+    step: 'extraction',
+    label: '业务对象提取',
+    passed: matched ? extraction.value ? true : false : null,
+    detail: matched
+      ? extraction.value
+        ? `提取到业务对象「${objectKey}」（${config.extraction?.objectLabel ?? '对象'}）`
+        : `未提取到业务对象：${extraction.error}`
+      : '规则未命中，跳过提取',
+  });
+
+  let assignees: string[] = [];
+  if (matched && config.assignee) {
+    switch (config.assignee.mode) {
+      case 'mention':
+        assignees = [...input.mentions];
+        break;
+      case 'sender':
+        assignees = [input.sender];
+        break;
+      case 'static':
+        assignees = config.assignee.staticUsers ?? [];
+        break;
+      case 'external_map': {
+        const hit = (config.assignee.externalMap ?? []).find(
+          (m) => m.key === objectKey,
+        );
+        assignees = hit ? [hit.user] : config.assignee.fallback ? [config.assignee.fallback] : [];
+        break;
+      }
+    }
+  }
+  if (matched) {
+    trace.push({
+      step: 'assignee',
+      label: '负责人解析',
+      passed: assignees.length > 0,
+      detail:
+        assignees.length > 0
+          ? `负责人策略命中：${assignees.join('、')}`
+          : '未能解析出负责人（可进入待确认）',
+    });
+  }
+
+  const timing = computeRunAt(sentAt, config.timing, timezone);
+  const runAt = matched ? timing.runAt : sentAt;
+  const dueAt = new Date(runAt.getTime() + 24 * 60 * 60_000);
+  if (matched) {
+    trace.push({
+      step: 'timing',
+      label: `执行时机（${TIMING_MODE_LABELS[config.timing.mode]}）`,
+      passed: true,
+      detail: timing.detail,
+    });
+  }
+
+  const dedupValues: Record<string, string> = {
+    message_id: input.messageId,
+    object_key: objectKey,
+    rule_id: rule.code,
+    source_group: input.sourceGroup,
+    sender: input.sender,
+  };
+  const dedupKey = matched
+    ? config.dedupFields.map((f) => dedupValues[f] ?? '').join(':')
+    : '';
+  if (matched) {
+    trace.push({
+      step: 'dedup',
+      label: '去重键',
+      passed: config.dedupFields.length > 0,
+      detail: config.dedupFields.length
+        ? `字段组合（${config.dedupFields.map((f) => DEDUP_FIELD_LABELS[f]).join(' + ')}）→ ${dedupKey}`
+        : '未配置去重键字段',
+    });
+  }
+
+  const notifyLabels = matched
+    ? config.notifyTargets.map((t) => {
+        if (t.type === 'user') return `指定人员：${t.value ?? ''}`;
+        if (t.type === 'notify_group') return `通知群：${t.value ?? ''}`;
+        return `来源群：${input.sourceGroup}`;
+      })
+    : [];
+  if (matched) {
+    trace.push({
+      step: 'notify',
+      label: '通知目标',
+      passed: config.notifyTargets.length > 0,
+      detail: notifyLabels.length
+        ? notifyLabels.join('；')
+        : '未配置通知目标',
+    });
+  }
+
+  const cancelHit =
+    matched && config.cancelWords.some((w) => w && input.messageText.includes(w));
+  if (matched && config.cancelWords.length > 0) {
+    trace.push({
+      step: 'cancel',
+      label: '取消词检查',
+      passed: null,
+      detail: cancelHit
+        ? `命中取消词，任务将被取消（范围：${config.cancelScope === 'rule' ? '本规则' : '同一业务对象'}）`
+        : '未命中取消词',
+    });
+  }
+
+  const vars = {
+    object_key: objectKey,
+    object_version: version.value,
+    sender: input.sender,
+    source_group: input.sourceGroup,
+    rule_name: rule.name,
+  };
+
+  return {
+    matched,
+    matchedConditions: trigger.evals.filter((e) => e.passed).map((e) => e.label),
+    excluded: sourceOk && trigger.matched && exclusion.matched,
+    exclusionReason: exclusion.matched
+      ? exclusion.evals.find((e) => e.passed)?.detail ?? '命中排除条件'
+      : '',
+    extractedObjectKey: objectKey,
+    extractedObjectVersion: matched ? version.value : '',
+    assignees,
+    runAt: matched ? runAt.toISOString() : '',
+    dueAt: matched ? dueAt.toISOString() : '',
+    dedupKey,
+    notifyTargets: notifyLabels,
+    taskTitle: matched ? renderTemplate(config.taskTitleTemplate, vars) : '',
+    taskDesc: matched ? renderTemplate(config.taskDescTemplate, vars) : '',
+    cancelMatched: cancelHit,
+    trace,
+  };
+};
+
+/* ===== 发布校验 ===== */
+
+export const validateRuleConfig = (config: RuleConfig): ValidationResult => {
+  const issues: string[] = [];
+  if (!config.sourceConnectorId) issues.push('缺少来源连接器');
+  if (config.sourceGroups.length === 0) issues.push('缺少来源群');
+  if (config.trigger.conditions.length === 0) issues.push('缺少触发条件');
+  if (!config.assignee) issues.push('缺少负责人策略');
+  if (config.notifyTargets.length === 0) issues.push('缺少通知目标');
+  if (config.dedupFields.length === 0) issues.push('缺少去重键字段');
+  if (!config.taskTitleTemplate) issues.push('缺少任务标题模板');
+
+  for (const cond of [...config.trigger.conditions, ...config.exclusions.conditions]) {
+    if (cond.type === 'regex' && cond.pattern) {
+      try {
+        new RegExp(cond.pattern);
+      } catch {
+        issues.push(`正则表达式无效：${cond.pattern}`);
+      }
+    }
+  }
+  if (config.extraction?.objectPattern) {
+    try {
+      new RegExp(config.extraction.objectPattern);
+    } catch {
+      issues.push(`业务对象提取正则无效：${config.extraction.objectPattern}`);
+    }
+  }
+  if (config.timing.mode === 'relative_delay' && !(config.timing.delayMinutes && config.timing.delayMinutes > 0)) {
+    issues.push('相对延迟必须配置大于 0 的延迟分钟数');
+  }
+  if (config.timing.mode === 'fixed_next_day' && !config.timing.fixedTime) {
+    issues.push('固定次日时间必须配置执行时间');
+  }
+  return { passed: issues.length === 0, issues };
+};

@@ -313,7 +313,7 @@ export interface Rule {
 export interface RulePayload {
   name: string;
   code: string;
-  description: string;
+  description?: string;
   type: RuleType;
   config: RuleConfig;
 }
@@ -356,6 +356,7 @@ export interface SimulationInput {
   replyDepth: number;
   sourceGroup: string;
   messageId: string;
+  messageType: MessageType;
 }
 
 export interface SimulationTraceStep {
