@@ -20,6 +20,7 @@
 - `GET /api/audit`（筛选：action/entity/日期）
 - `GET/PUT /api/workspace`（设置）
 - `GET /api/integration/export`（发布配置 JSON 下载），`GET /api/integration/doc`（接入文档 markdown 下载）
+- OpenAPI（妙搭 API Key 网关鉴权，spec 见 docs/openapi.json）：`GET /openapi/v1/published-config`、`GET /openapi/v1/schema`、`POST /openapi/v1/simulate`（确定性模拟，落 isDemo=true 的 simulation_run 与审计）
 
 ## 设计规范（必须严格遵循）
 - 企业级 B2B 工作台：浅色中性底（页面背景 `bg-muted/40`），**单一蓝绿色强调色**（主题 token `--primary` 已改为 teal `hsl(174 72% 30%)`），禁止紫色渐变、玻璃拟态、营销 Hero、大卡片墙
@@ -42,8 +43,8 @@
 - 发布校验阻断项：缺连接器、缺负责人策略、缺通知目标、缺去重键
 
 ## 安全约束
-- Connector 的 Secret/Token 只写不读：接口永不返回明文，列表/日志/导出只给掩码；DB 存密文与否不影响演示（演示不内置真实密钥）
-- 接入中心 API Key 只展示一次的产品说明，演示环境无真实密钥
+- 连接器不保存真实 Secret/Token：只存非敏感凭证引用 credentialRef（如 secret-manager://team/feishu-prod）；App ID 列表/日志/导出只给掩码，无明文凭证字段
+- 接入中心 API Key 只展示一次的产品说明，演示环境无真实密钥；接入方式为 2 可用（配置拉取 API /openapi/v1/published-config、导出 JSON）+ 1 扩展方案（发布 Webhook，未启用）
 
 ## 环境备注
 - 演示数据全部匿名（人员用「成员A/成员B」等或测试 user_id 展示），模拟运行记录明确标识 Demo

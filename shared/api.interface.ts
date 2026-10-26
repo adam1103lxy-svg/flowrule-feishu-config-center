@@ -265,7 +265,7 @@ export interface Connector {
   name: string;
   environment: ConnectorEnv;
   feishuAppIdMasked: string;
-  secretSet: boolean;
+  credentialRef: string;
   sourceGroups: string[];
   notifyGroups: string[];
   timezone: string;
@@ -280,8 +280,7 @@ export interface ConnectorPayload {
   name: string;
   environment: ConnectorEnv;
   feishuAppId: string;
-  secret?: string;
-  token?: string;
+  credentialRef: string;
   sourceGroups: string[];
   notifyGroups: string[];
   timezone: string;
@@ -470,4 +469,20 @@ export interface PublishedConfigExport {
 export interface IntegrationDocPayload {
   filename: string;
   markdown: string;
+}
+
+/* ===== OpenAPI 对外接入（/openapi/v1）===== */
+
+export interface OpenapiSimulateRequest {
+  ruleCode: string;
+  event: SimulationInput;
+}
+
+export interface OpenapiSimulateResponse {
+  ruleCode: string;
+  ruleName: string;
+  ruleVersion: number;
+  isDemo: boolean;
+  note: string;
+  decision: SimulationResult;
 }

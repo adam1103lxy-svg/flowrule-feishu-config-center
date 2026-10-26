@@ -210,13 +210,13 @@ export const connector = pgTable("connector", {
   name: varchar("name", { length: 100 }).notNull(),
   environment: varchar("environment", { length: 20 }).notNull().default('prod'),
   feishuAppId: varchar("feishu_app_id", { length: 64 }).notNull(),
-  secretSet: boolean("secret_set").notNull().default(false),
   sourceGroups: text("source_groups").array().notNull().default([]),
   notifyGroups: text("notify_groups").array().notNull().default([]),
   timezone: varchar("timezone", { length: 64 }).notNull().default('Asia/Shanghai'),
   ownerSource: varchar("owner_source", { length: 20 }).notNull().default('contact'),
   scanPeriodMinutes: integer("scan_period_minutes").notNull().default(5),
   status: varchar("status", { length: 20 }).notNull().default('active'),
+  credentialRef: varchar("credential_ref", { length: 255 }).notNull(),
   // System field: Creation time (auto-filled, do not modify)
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
   // System field: Creator (auto-filled, do not modify)

@@ -108,8 +108,7 @@ const connectorFormSchema = z.object({
   name: z.string().min(1, '名称不能为空').max(100, '名称不能超过 100 字'),
   environment: z.enum(CONNECTOR_ENVS),
   feishuAppId: z.string().min(1, '飞书 App ID 不能为空').max(64, '不能超过 64 字'),
-  secret: z.string().max(512, 'App Secret 不能超过 512 字'),
-  token: z.string().max(512, 'Token 不能超过 512 字'),
+  credentialRef: z.string().max(255, '凭证引用不能超过 255 字'),
   sourceGroups: z.array(z.string()),
   notifyGroups: z.array(z.string()),
   timezone: z.string().min(1, '请选择时区'),
@@ -130,8 +129,7 @@ const DEFAULT_CONNECTOR_FORM: ConnectorFormValues = {
   name: '',
   environment: 'prod',
   feishuAppId: '',
-  secret: '',
-  token: '',
+  credentialRef: '',
   sourceGroups: [],
   notifyGroups: [],
   timezone: 'Asia/Shanghai',
@@ -208,8 +206,7 @@ const ConnectorFormDialog = ({ editing, onClose }: ConnectorFormDialogProps) => 
           name: editing.name,
           environment: editing.environment,
           feishuAppId: editing.feishuAppIdMasked,
-          secret: '',
-          token: '',
+          credentialRef: editing.credentialRef,
           sourceGroups: [...editing.sourceGroups],
           notifyGroups: [...editing.notifyGroups],
           timezone: editing.timezone,
@@ -229,6 +226,7 @@ const ConnectorFormDialog = ({ editing, onClose }: ConnectorFormDialogProps) => 
       name: data.name.trim(),
       environment: data.environment,
       feishuAppId: data.feishuAppId.trim(),
+      credentialRef: data.credentialRef.trim(),
       sourceGroups: data.sourceGroups,
       notifyGroups: data.notifyGroups,
       timezone: data.timezone,
@@ -236,10 +234,6 @@ const ConnectorFormDialog = ({ editing, onClose }: ConnectorFormDialogProps) => 
       scanPeriodMinutes: Number(data.scanPeriodMinutes),
       status: data.status,
     };
-    const secret = data.secret.trim();
-    const token = data.token.trim();
-    if (secret) payload.secret = secret;
-    if (token) payload.token = token;
     try {
       if (editing) {
         await updateMutation.mutateAsync({ id: editing.id, payload });
@@ -265,7 +259,7 @@ const ConnectorFormDialog = ({ editing, onClose }: ConnectorFormDialogProps) => 
         <DialogHeader>
           <DialogTitle>{editing ? '编辑连接器' : '新增连接器'}</DialogTitle>
           <DialogDescription>
-            App Secret / Token 只写不回显，任何列表、日志与导出都不包含明文密钥。
+            本平台不保存真实 Secret/Token，仅记录非敏感凭证引用（credentialRef）；真实凭据由接入方运行时的密钥体系管理。
           </DialogDescription>
         </DialogHeader>
         <Form {...form}>
@@ -362,38 +356,20 @@ const ConnectorFormDialog = ({ editing, onClose }: ConnectorFormDialogProps) => 
                 />
                 <FormField
                   control={form.control}
-                  name="secret"
+                  name="credentialRef"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>App Secret</FormLabel>
+                      <FormLabel>凭证引用（credentialRef）</FormLabel>
                       <FormControl>
                         <Input
-                          type="password"
-                          autoComplete="new-password"
-                          placeholder={editing ? '留空保持不变' : '可选，仅写入不回显'}
+                          placeholder="如：secret-manager://team/feishu-prod"
                           {...field}
                         />
                       </FormControl>
-                      <FormDescription>密钥只写不回显，留空保持不变。</FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="token"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Token</FormLabel>
-                      <FormControl>
-                        <Input
-                          type="password"
-                          autoComplete="new-password"
-                          placeholder={editing ? '留空保持不变' : '可选，仅写入不回显'}
-                          {...field}
-                        />
-                      </FormControl>
-                      <FormDescription>令牌只写不回显，留空保持不变。</FormDescription>
+                      <FormDescription>
+                        非敏感引用，指向接入方密钥体系中的凭据；请勿在此填写真实
+                        Secret/Token。
+                      </FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -706,7 +682,7 @@ const ConnectorsPage = () => {
     <div>
       <PageHeader
         title="连接器管理"
-        description="维护独立的飞书连接器信息，App Secret 仅写入、永不回显明文。"
+        description="维护独立的飞书连接器信息与凭证引用，本平台不保存真实 Secret/Token。"
         actions={
           <Button onClick={() => setFormTarget({ mode: 'create' })}>
             <Plus />
@@ -716,10 +692,10 @@ const ConnectorsPage = () => {
       />
       <Alert className="mb-6">
         <ShieldCheck />
-        <AlertTitle>密钥只写不读</AlertTitle>
+        <AlertTitle>凭据边界</AlertTitle>
         <AlertDescription>
           <p>
-            App Secret / Token 仅在保存时写入，任何列表、日志与导出都不包含明文密钥；列表只展示「已配置密钥」状态。
+            本平台不保存真实 Secret/Token，仅记录非敏感凭证引用（credentialRef）；真实凭据由接入方运行时的密钥体系管理，任何列表、日志与导出都不包含明文凭据。
           </p>
         </AlertDescription>
       </Alert>
@@ -802,17 +778,18 @@ const ConnectorsPage = () => {
                   <TableCell className="px-4">
                     <div className="flex flex-col gap-1">
                       <span className="font-mono text-xs">{connector.feishuAppIdMasked}</span>
-                      <Badge
-                        variant="outline"
-                        className={cn(
-                          'w-fit whitespace-nowrap',
-                          connector.secretSet
-                            ? 'bg-success/10 text-success border-success/30'
-                            : 'bg-muted text-muted-foreground border-border',
-                        )}
-                      >
-                        {connector.secretSet ? '已配置密钥' : '未配置密钥'}
-                      </Badge>
+                      {connector.credentialRef ? (
+                        <span
+                          className="block max-w-[160px] truncate font-mono text-xs text-muted-foreground"
+                          title={connector.credentialRef}
+                        >
+                          {connector.credentialRef}
+                        </span>
+                      ) : (
+                        <Badge variant="outline" className="w-fit whitespace-nowrap bg-muted text-muted-foreground border-border">
+                          未设置凭证引用
+                        </Badge>
+                      )}
                     </div>
                   </TableCell>
                   <TableCell className="px-4">

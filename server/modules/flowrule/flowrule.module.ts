@@ -11,6 +11,7 @@ import { WorkspaceController } from './workspace.controller';
 import { WorkspaceService } from './workspace.service';
 import { DashboardController } from './dashboard.controller';
 import { IntegrationController } from './integration.controller';
+import { IntegrationOpenApiController } from './integration.openapi.controller';
 import { IntegrationService } from './integration.service';
 import { SeedService } from './seed.service';
 
@@ -23,6 +24,7 @@ import { SeedService } from './seed.service';
     WorkspaceController,
     DashboardController,
     IntegrationController,
+    IntegrationOpenApiController,
   ],
   providers: [
     ConnectorsService,

@@ -80,6 +80,12 @@ export class RulesService {
     return toRule(row);
   }
 
+  async getByCode(code: string): Promise<Rule> {
+    const [row] = await this.db.select().from(rule).where(eq(rule.code, code));
+    if (!row) throw new NotFoundException(`规则 ${code} 不存在`);
+    return toRule(row);
+  }
+
   async create(payload: RuleWriteInput, userId: string): Promise<Rule> {
     if (!payload.code.trim()) throw new BadRequestException('规则标识不能为空');
     try {

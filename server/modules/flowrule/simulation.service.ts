@@ -3,6 +3,8 @@ import { desc, eq, gte } from 'drizzle-orm';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
 import { simulationRun, workspace } from '@server/database/schema';
 import type {
+  OpenapiSimulateResponse,
+  Rule,
   SimulationInput,
   SimulationRun,
 } from '@shared/api.interface';
@@ -78,6 +80,33 @@ export class SimulationService {
     userId: string,
   ): Promise<SimulationRun> {
     const rule = await this.rulesService.get(ruleId);
+    return this.executeAndPersist(rule, rawInput, { isDemo: false, userId });
+  }
+
+  async runByCode(
+    ruleCode: string,
+    rawEvent: unknown,
+  ): Promise<OpenapiSimulateResponse> {
+    const rule = await this.rulesService.getByCode(ruleCode);
+    const run = await this.executeAndPersist(rule, rawEvent, {
+      isDemo: true,
+      source: 'OpenAPI',
+    });
+    return {
+      ruleCode: rule.code,
+      ruleName: rule.name,
+      ruleVersion: rule.currentVersion,
+      isDemo: true,
+      note: '模拟结果由本地确定性规则引擎评估：不调用飞书、不创建真实任务。',
+      decision: run.result,
+    };
+  }
+
+  private async executeAndPersist(
+    rule: Rule,
+    rawInput: unknown,
+    opts: { isDemo: boolean; userId?: string; source?: string },
+  ): Promise<SimulationRun> {
     const input = normalizeSimulationInput(rawInput);
     const timezone = await this.resolveTimezone(rule);
     const result = simulateRule(
@@ -92,21 +121,22 @@ export class SimulationService {
     const [row] = await this.db
       .insert(simulationRun)
       .values({
-        ruleId,
+        ruleId: rule.id,
         ruleName: rule.name,
         ruleVersionLabel: versionLabel,
         input: JSON.stringify(input),
         result: JSON.stringify(result),
-        isDemo: false,
+        isDemo: opts.isDemo,
       })
       .returning();
+    const origin = opts.source ? `，来源：${opts.source}` : '';
     await this.auditService.write({
       action: 'simulation_run',
       entityType: 'simulation',
       entityId: row.id,
       entityName: rule.name,
-      summary: `模拟测试规则「${rule.name}」：${result.matched ? '命中' : '未命中'}（${versionLabel}）`,
-      userId,
+      summary: `模拟测试规则「${rule.name}」：${result.matched ? '命中' : '未命中'}（${versionLabel}）${origin}`,
+      userId: opts.userId,
     });
     return toRun(row);
   }

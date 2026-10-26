@@ -18,6 +18,7 @@ import {
 } from '@client/src/api/integration';
 import PageHeader from '@client/src/components/shared/page-header';
 import { Alert, AlertDescription, AlertTitle } from '@client/src/components/ui/alert';
+import { Badge } from '@client/src/components/ui/badge';
 import { Button } from '@client/src/components/ui/button';
 import {
   Card,
@@ -49,22 +50,29 @@ import { getApiErrorMessage } from '@client/src/utils/api-error';
 import type { PublishedConfigExport } from '@shared/api.interface';
 import CodeBlock from './code-block';
 
-const CURL_EXAMPLE = `# 拉取当前发布配置（Bearer 鉴权）
+const CURL_EXAMPLE = `# 拉取当前发布配置（妙搭 Open API Key Bearer 鉴权）
 curl -s -H "Authorization: Bearer $FLOWRULE_API_KEY" \\
-  "$FLOWRULE_BASE_URL/api/integration/config"
+  "$FLOWRULE_BASE_URL/openapi/v1/published-config"
 
-# 下载接入文档（markdown 文件）
+# 获取发布配置 JSON Schema
 curl -s -H "Authorization: Bearer $FLOWRULE_API_KEY" \\
-  -o flowrule-integration-doc.md \\
-  "$FLOWRULE_BASE_URL/api/integration/doc"
+  "$FLOWRULE_BASE_URL/openapi/v1/schema"
 
-# 导出发布配置 JSON 文件
-curl -s -H "Authorization: Bearer $FLOWRULE_API_KEY" \\
-  -o flowrule-published-config.json \\
-  "$FLOWRULE_BASE_URL/api/integration/export"`;
+# 模拟测试：按 ruleCode 评估统一消息事件（不调用飞书、不创建任务）
+curl -s -X POST -H "Authorization: Bearer $FLOWRULE_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "ruleCode": "manual_assign_v1",
+    "event": {
+      "messageText": "提审：工单号 APP-2048 已提交",
+      "sender": "ou_demo_member_b",
+      "mentions": ["ou_demo_member_a"],
+      "sourceGroup": "oc_demo_group_a"
+    }
+  }' \\n  "$FLOWRULE_BASE_URL/openapi/v1/simulate"`;
 
 const JS_EXAMPLE = `const res = await fetch(
-  \`\${process.env.FLOWRULE_BASE_URL}/api/integration/config\`,
+  \`\${process.env.FLOWRULE_BASE_URL}/openapi/v1/published-config\`,
   { headers: { Authorization: \`Bearer \${process.env.FLOWRULE_API_KEY}\` } },
 );
 if (!res.ok) throw new Error(\`拉取配置失败: \${res.status}\`);
@@ -79,7 +87,7 @@ const PYTHON_EXAMPLE = `import os
 import requests
 
 resp = requests.get(
-    f"{os.environ['FLOWRULE_BASE_URL']}/api/integration/config",
+    f"{os.environ['FLOWRULE_BASE_URL']}/openapi/v1/published-config",
     headers={"Authorization": f"Bearer {os.environ['FLOWRULE_API_KEY']}"},
     timeout=10,
 )
@@ -89,9 +97,11 @@ config = resp.json()
 for rule in config["rules"]:
     print(rule["code"], "v%s" % rule["version"], rule["config"]["trigger"])`;
 
-const BEARER_EXAMPLE = `# 所有 /api/integration/* 请求必须携带 Bearer Token
-Authorization: Bearer <your-api-key>
+const BEARER_EXAMPLE = `# 所有 /openapi/v1/** 请求必须携带妙搭 Open API Key
+Authorization: Bearer <miaoda-open-api-key>
 
+# Key 由应用管理员在妙达平台「开放 API Key 管理」中创建并绑定本应用；
+# 原始 Key 仅创建时展示一次，本应用界面不管理密钥。
 # 缺失、无效或已吊销的 Key 返回 401，不会回退到匿名访问`;
 
 const EVENT_INPUT_EXAMPLE = `{
@@ -137,12 +147,12 @@ const ENV_VARS: EnvVarRow[] = [
   },
   {
     name: 'FLOWRULE_API_KEY',
-    description: '接入方 API Key，用于 Bearer 鉴权；创建时仅展示一次',
+    description: '妙搭 Open API Key（Bearer 鉴权）；由应用管理员在妙达平台「开放 API Key 管理」中创建，原始 Key 仅展示一次',
     example: '创建后自行填入（不内置示例值）',
   },
   {
     name: 'FLOWRULE_WEBHOOK_SECRET',
-    description: 'Webhook 签名密钥，启用发布 Webhook 时配置',
+    description: 'Webhook 签名密钥（扩展方案预留，当前未启用）',
     example: '创建后自行填入（不内置示例值）',
   },
   {
@@ -159,17 +169,16 @@ interface ErrorCodeRow {
 }
 
 const ERROR_CODES: ErrorCodeRow[] = [
-  { code: '400', meaning: '请求参数或配置结构非法', handling: '校验请求体字段后重发，不自动重试' },
-  { code: '401', meaning: 'Bearer 鉴权失败或 Webhook 签名校验失败', handling: '检查 API Key / Secret 是否有效' },
-  { code: '403', meaning: 'API Key 无对应权限', handling: '确认 Key 的授权范围' },
-  { code: '404', meaning: '路径不存在或暂无发布配置', handling: '核对 FLOWRULE_BASE_URL 与发布状态' },
-  { code: '409', meaning: '幂等冲突：同一去重键已处理', handling: '按「已存在」处理，不视为错误' },
+  { code: '400', meaning: '请求参数或事件结构非法', handling: '校验请求体字段后重发，不自动重试' },
+  { code: '401', meaning: '妙搭 Open API Key 缺失或无效', handling: '检查 Bearer 头，勿重试' },
+  { code: '403', meaning: 'API Key 无对应权限', handling: '联系平台管理员确认 Key 的授权范围' },
+  { code: '404', meaning: '路径不存在或 ruleCode 不存在', handling: '核对 FLOWRULE_BASE_URL 与规则标识，勿重试' },
   { code: '429', meaning: '请求频率超限', handling: '退避后重试，必要时放大轮询间隔' },
   { code: '5xx', meaning: '平台服务端异常', handling: '指数退避重试并触发告警' },
 ];
 
 const SIGNATURE_STEPS: string[] = [
-  '平台在规则发布后，使用 Webhook Secret 对请求 body 计算 HMAC-SHA256 签名。',
+  '（扩展方案预留，当前未启用）启用后：平台在规则发布后，使用 Webhook Secret 对请求 body 计算 HMAC-SHA256 签名。',
   '推送请求头携带时间戳与签名（X-FlowRule-Timestamp / X-FlowRule-Signature）。',
   '接入方用相同 Secret 对原始 body 重算签名，并与请求头中的签名比对。',
   '校验通过后更新本地配置缓存；校验失败返回 401 并记录告警，不更新缓存。',
@@ -195,8 +204,9 @@ interface ChecklistItem {
 }
 
 const CHECKLIST: ChecklistItem[] = [
-  { key: 'auth', label: 'API Key 已通过 Bearer 请求成功拉取一次发布配置' },
-  { key: 'webhook', label: 'Webhook 回调签名校验通过并正确更新本地缓存（如启用）' },
+  { key: 'auth', label: '已用妙搭 Open API Key 成功拉取 /openapi/v1/published-config，返回 JSON 通过 /openapi/v1/schema 校验' },
+  { key: 'cache', label: '配置轮询按 exportedAt / version 判断变更，未变化不重建本地缓存' },
+  { key: 'simulate', label: '正例 / 反例消息经 /openapi/v1/simulate 与平台模拟测试台结果一致' },
   { key: 'positive', label: '正例消息能命中规则并按预期创建任务（负责人、due_at 正确）' },
   { key: 'negative', label: '反例消息不命中、不创建任务' },
   { key: 'dedup', label: '重复推送同一消息只创建一次任务（去重键生效）' },
@@ -209,23 +219,26 @@ const ACCESS_MODES = [
   {
     icon: RefreshCw,
     title: '配置拉取 API',
+    status: 'available' as const,
     description:
-      '接入方运行时定期调用 GET /api/integration/config，拉取最新发布规则配置，在本地评估消息。',
+      '接入方运行时定期调用 GET /openapi/v1/published-config（妙搭 Open API Key Bearer 鉴权），拉取最新发布规则配置，在本地评估消息。',
     scenario: '适合有轮询能力的任务运行时，规则变更可接受分钟级生效。',
-  },
-  {
-    icon: Webhook,
-    title: '发布 Webhook',
-    description:
-      '规则发布后平台主动把新配置推送到接入方注册的回调地址，接入方校验签名后更新本地缓存。',
-    scenario: '适合无法主动轮询、要求发布后尽快生效的场景。',
   },
   {
     icon: FileJson,
     title: '导出 JSON',
+    status: 'available' as const,
     description:
-      '通过 GET /api/integration/export 导出当前发布配置 JSON 文件，随接入方部署发布。',
+      '登录用户在本页面导出当前发布配置 JSON 文件（页面功能，非对外 API），随接入方部署发布。',
     scenario: '适合变更频率低、配置随代码版本一起上线的场景。',
+  },
+  {
+    icon: Webhook,
+    title: '发布 Webhook',
+    status: 'extension' as const,
+    description:
+      '扩展接入方案（当前未启用）：规划为规则发布后平台主动推送新配置到接入方回调地址。当前平台未实现主动投递，接入方以轮询 published-config 为准。',
+    scenario: '启用前请勿依赖本方式做上线验收。',
   },
 ];
 
@@ -253,7 +266,7 @@ const IntegrationPage = () => {
     <div className="space-y-6">
       <PageHeader
         title="接入中心"
-        description="三种接入方式、代码示例、鉴权与幂等规范、上线验收清单。"
+        description="当前 2 种可用接入方式 + 1 种扩展方案（Webhook 未启用），代码示例、鉴权与幂等规范、上线验收清单。"
         actions={
           <>
             <Button
@@ -300,9 +313,19 @@ const IntegrationPage = () => {
         {ACCESS_MODES.map((mode) => (
           <Card key={mode.title}>
             <CardHeader className="p-5">
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <mode.icon className="size-4 text-primary" />
                 <CardTitle className="text-base">{mode.title}</CardTitle>
+                <Badge
+                  variant="outline"
+                  className={
+                    mode.status === 'available'
+                      ? 'bg-success/10 text-success border-success/30'
+                      : 'bg-warning/10 text-warning border-warning/30'
+                  }
+                >
+                  {mode.status === 'available' ? '可用' : '扩展方案 · 当前未启用'}
+                </Badge>
               </div>
               <CardDescription className="whitespace-normal">
                 {mode.description}
@@ -319,7 +342,7 @@ const IntegrationPage = () => {
         <CardHeader className="p-5">
           <CardTitle className="text-base">代码示例</CardTitle>
           <CardDescription>
-            以 FLOWRULE_BASE_URL / FLOWRULE_API_KEY 环境变量方式接入，可复制后直接改用。
+            以 FLOWRULE_BASE_URL / FLOWRULE_API_KEY（妙搭 Open API Key）环境变量方式接入，可复制后直接改用。
           </CardDescription>
         </CardHeader>
         <CardContent className="p-5 pt-0">
@@ -347,7 +370,7 @@ const IntegrationPage = () => {
           <CardHeader className="p-5">
             <CardTitle className="text-base">当前发布配置（真实数据）</CardTitle>
             <CardDescription>
-              以下为 GET /api/integration/config 的真实返回结果，即导出 JSON 文件的内容。
+              以下为 GET /openapi/v1/published-config 的返回内容（本页经登录态接口展示同样数据），即导出 JSON 文件的内容。
             </CardDescription>
           </CardHeader>
           <CardContent className="p-5 pt-0">
@@ -437,7 +460,7 @@ const IntegrationPage = () => {
         <CardHeader className="p-5">
           <CardTitle className="text-base">事件输入 / 决策输出示例</CardTitle>
           <CardDescription>
-            接入方向本平台语义对齐的消息事件结构，与规则评估产出的决策结果（匿名示例数据）。
+            统一消息事件结构与 POST /openapi/v1/simulate 请求体一致；决策输出为规则评估结果（匿名示例数据，不调用飞书、不创建任务）。
           </CardDescription>
         </CardHeader>
         <CardContent className="p-5 pt-0">
@@ -485,7 +508,9 @@ const IntegrationPage = () => {
         <Card>
           <CardHeader className="p-5">
             <CardTitle className="text-base">鉴权与签名</CardTitle>
-            <CardDescription>Bearer 鉴权示例与 Webhook 签名校验流程。</CardDescription>
+            <CardDescription>
+              妙达 Open API Key Bearer 鉴权示例；签名校验为 Webhook 扩展方案预留设计（当前未启用）。
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4 p-5 pt-0">
             <div>
@@ -595,15 +620,15 @@ const IntegrationPage = () => {
                 <KeyRound className="size-4 text-primary" />
                 <CardTitle className="text-base">API Key 安全说明</CardTitle>
               </div>
-              <CardDescription>演示环境不内置任何真实密钥。</CardDescription>
+              <CardDescription>鉴权使用妙搭平台 Open API Key 机制，本应用界面不管理密钥。</CardDescription>
             </CardHeader>
             <CardContent className="p-5 pt-0">
               <SectionList
                 items={[
-                  'API Key 创建时仅展示一次，请立即保存到你的密钥管理系统。',
-                  '平台只保存 Key 的哈希值，无法找回明文。',
+                  'Key 由应用管理员在妙达平台「开放 API Key 管理」中创建并绑定本应用，本应用界面不管理、不存储任何密钥。',
+                  '原始 Key 仅创建时展示一次，请立即保存到你的密钥管理系统。',
                   'Key 丢失后只能吊销旧 Key 并重新创建；吊销后旧 Key 立即失效。',
-                  '本演示环境不内置任何真实密钥，接入前请创建你自己的 API Key。',
+                  '本演示环境不内置任何真实密钥。',
                 ]}
               />
             </CardContent>

@@ -33,12 +33,17 @@
     {
       "id": 7,
       "priority": "p1",
-      "description": "连接器管理：点击新增连接器，填写名称（如 E2E测试连接器）、环境、飞书 App ID（如 cli_e2etest123）与 Secret 后保存，预期列表出现新行且 App ID 以掩码（****）展示、无明文 Secret；随后删除该连接器，预期行消失"
+      "description": "连接器管理：点击新增连接器，预期表单无 Secret/Token 输入框；填写名称（如 E2E测试连接器）、环境、飞书 App ID（如 cli_e2etest123）与凭证引用 credentialRef（如 secret-manager://e2e/demo）后保存，预期列表出现新行且 App ID 以掩码（****）展示、credentialRef 可见；随后删除该连接器，预期行消失"
     },
     {
       "id": 8,
       "priority": "p1",
-      "description": "打开接入中心页，预期三种接入方式卡、curl/JavaScript/Python 三个代码 Tab 可切换；点击「导出当前发布配置」按钮，预期发起 /api/integration/export 请求且响应 200，出现下载成功反馈"
+      "description": "打开接入中心页，预期接入方式卡共 3 张：2 张带「可用」徽标（配置拉取 API、导出 JSON）、1 张带「扩展方案 · 当前未启用」徽标（发布 Webhook）；curl/JavaScript/Python 三个代码 Tab 可切换且示例均使用 /openapi/v1 路径与 Bearer 鉴权；点击「导出当前发布配置」按钮，预期发起 /api/integration/export 请求且响应 200，出现下载成功反馈"
+    },
+    {
+      "id": 9,
+      "priority": "p1",
+      "description": "在接入中心点击「下载接入文档」，预期发起 /api/integration/doc 请求且响应 200，出现下载成功反馈，页面无报错"
     }
   ]
 }

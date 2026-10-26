@@ -31,7 +31,7 @@ const DEMO_CONNECTORS = [
     name: '生产 · 飞书主连接器',
     environment: 'prod',
     feishuAppId: 'cli_a1b2c3d4e5f60g78',
-    secretSet: true,
+    credentialRef: 'secret-manager://team/feishu-prod',
     sourceGroups: ['客服支持群', '发布值班群', '配置变更通知群'],
     notifyGroups: ['配置变更通知群', '任务提醒群'],
     timezone: 'Asia/Shanghai',
@@ -43,7 +43,7 @@ const DEMO_CONNECTORS = [
     name: '测试 · 沙箱连接器',
     environment: 'test',
     feishuAppId: 'cli_t9s8r7q6p5o4n321',
-    secretSet: false,
+    credentialRef: '',
     sourceGroups: ['测试沙箱群'],
     notifyGroups: ['测试沙箱群'],
     timezone: 'Asia/Shanghai',
@@ -324,7 +324,7 @@ export class SeedService {
       defaultScanPeriodMinutes: 5,
       pendingConfirmPolicy: '失败任务进入待确认列表，由规则负责人人工重试或关闭',
       securityNote:
-        'App Secret 只写不回显；API Key 仅创建时展示一次；导出与日志不含任何明文凭据。本演示环境未内置真实密钥。',
+        '本配置平台不保存真实 Secret/Token，仅记录非敏感凭证引用（credentialRef）；妙搭 Open API Key 由应用管理员在平台侧创建、仅展示一次，本应用界面不管理密钥。演示环境不内置真实密钥。',
       createdBy: null,
       updatedBy: null,
     });

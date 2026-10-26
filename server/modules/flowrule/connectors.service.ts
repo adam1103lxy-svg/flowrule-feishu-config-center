@@ -33,7 +33,7 @@ export class ConnectorsService {
     name: row.name,
     environment: row.environment as Connector['environment'],
     feishuAppIdMasked: maskAppId(row.feishuAppId),
-    secretSet: row.secretSet,
+    credentialRef: row.credentialRef,
     sourceGroups: row.sourceGroups,
     notifyGroups: row.notifyGroups,
     timezone: row.timezone,
@@ -59,7 +59,7 @@ export class ConnectorsService {
         name: payload.name,
         environment: payload.environment,
         feishuAppId: payload.feishuAppId.trim(),
-        secretSet: Boolean(payload.secret && payload.secret.length > 0),
+        credentialRef: payload.credentialRef.trim(),
         sourceGroups: payload.sourceGroups,
         notifyGroups: payload.notifyGroups,
         timezone: payload.timezone,
@@ -91,10 +91,7 @@ export class ConnectorsService {
         name: payload.name,
         environment: payload.environment,
         feishuAppId: nextAppId,
-        secretSet:
-          payload.secret && payload.secret.length > 0
-            ? true
-            : existing.secretSet,
+        credentialRef: payload.credentialRef.trim(),
         sourceGroups: payload.sourceGroups,
         notifyGroups: payload.notifyGroups,
         timezone: payload.timezone,
@@ -136,7 +133,8 @@ export class ConnectorsService {
     const issues: string[] = [];
     const warnings: string[] = [];
     if (!row.feishuAppId.trim()) issues.push('缺少飞书 App ID');
-    if (!row.secretSet) warnings.push('尚未填写 App Secret（只写不回显，未填写不影响保存）');
+    if (!row.credentialRef.trim())
+      warnings.push('未设置凭证引用（credentialRef），请确认真实凭据已由接入方运行时的密钥体系托管')
     if (row.sourceGroups.length === 0) warnings.push('未配置来源群，规则无法绑定消息来源');
     if (row.notifyGroups.length === 0) warnings.push('未配置通知群，通知目标可能不完整');
     if (row.scanPeriodMinutes < 1) issues.push('扫描周期必须大于 0 分钟');

@@ -31,11 +31,8 @@ export class ConnectorPayloadDto {
   @IsString() @MaxLength(64)
   feishuAppId!: string;
 
-  @IsOptional() @IsString() @MaxLength(512)
-  secret?: string;
-
-  @IsOptional() @IsString() @MaxLength(512)
-  token?: string;
+  @IsString() @MaxLength(255)
+  credentialRef!: string;
 
   @IsArray() @IsString({ each: true })
   sourceGroups!: string[];
@@ -170,6 +167,14 @@ export class SimulationRunDto {
 
   @IsObject()
   input!: Record<string, unknown>;
+}
+
+export class OpenapiSimulateDto {
+  @IsString() @MaxLength(64)
+  ruleCode!: string;
+
+  @IsObject()
+  event!: Record<string, unknown>;
 }
 
 export class AuditListQueryDto {
