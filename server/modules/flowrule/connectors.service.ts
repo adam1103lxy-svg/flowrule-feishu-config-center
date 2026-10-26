@@ -80,13 +80,21 @@ export class ConnectorsService {
   }
 
   async update(id: string, payload: ConnectorPayload, userId: string): Promise<Connector> {
+    const [existing] = await this.db.select().from(connector).where(eq(connector.id, id));
+    if (!existing) throw new NotFoundException('连接器不存在');
+    const nextAppId = payload.feishuAppId.trim().includes('*')
+      ? existing.feishuAppId
+      : payload.feishuAppId.trim();
     const [row] = await this.db
       .update(connector)
       .set({
         name: payload.name,
         environment: payload.environment,
-        feishuAppId: payload.feishuAppId.trim(),
-        secretSet: Boolean(payload.secret && payload.secret.length > 0),
+        feishuAppId: nextAppId,
+        secretSet:
+          payload.secret && payload.secret.length > 0
+            ? true
+            : existing.secretSet,
         sourceGroups: payload.sourceGroups,
         notifyGroups: payload.notifyGroups,
         timezone: payload.timezone,
