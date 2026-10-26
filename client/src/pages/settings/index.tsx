@@ -34,8 +34,8 @@ const TIMEZONES = [
 ] as const;
 
 const SECURITY_CONSTRAINTS = [
-  '连接器的 Secret / Token 只写不回显：接口永不返回明文，列表与日志仅展示掩码。',
-  '接入中心 API Key 仅在创建时展示一次，之后不可再次查看。',
+  '平台不采集、不保存连接器 Secret / Token，只记录非敏感的凭证引用（credentialRef）。',
+  '妙搭 Open API Key 在平台侧创建并托管，本应用页面、日志与导出均不保存或展示密钥。',
   '演示环境不包含真实密钥，所有 Demo 数据均为匿名占位。',
 ];
 

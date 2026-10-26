@@ -9,7 +9,9 @@ build/
 */build/
 
 # Environment files
+.env
 .env.local
+!.env.example
 
 # Logs
 npm-debug.log*
