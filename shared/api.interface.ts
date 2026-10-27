@@ -48,6 +48,13 @@ export const CONNECTOR_STATUS_LABELS: Record<ConnectorStatus, string> = {
   inactive: '停用',
 };
 
+export const EXECUTION_IDENTITIES = ['app', 'user'] as const;
+export type ExecutionIdentity = (typeof EXECUTION_IDENTITIES)[number];
+export const EXECUTION_IDENTITY_LABELS: Record<ExecutionIdentity, string> = {
+  app: '应用身份',
+  user: '用户身份',
+};
+
 export const OWNER_SOURCES = ['contact', 'external', 'manual'] as const;
 export type OwnerSource = (typeof OWNER_SOURCES)[number];
 export const OWNER_SOURCE_LABELS: Record<OwnerSource, string> = {
@@ -362,6 +369,11 @@ export interface Connector {
   feishuAppIdMasked: string;
   secretConfigured: boolean;
   authStatus: ConnectorAuthStatus;
+  executionIdentity: ExecutionIdentity;
+  allowIdentityFallback: boolean;
+  userAuthorized: boolean;
+  userName: string;
+  userTokenExpiresAt: string | null;
   sourceGroups: string[];
   notifyGroups: string[];
   discoveredChats: DiscoveredChat[];
@@ -378,12 +390,23 @@ export interface ConnectorPayload {
   environment: ConnectorEnv;
   feishuAppId: string;
   feishuAppSecret?: string;
+  executionIdentity: ExecutionIdentity;
+  allowIdentityFallback: boolean;
   sourceGroups: string[];
   notifyGroups: string[];
   timezone: string;
   ownerSource: OwnerSource;
   scanPeriodMinutes: number;
   status: ConnectorStatus;
+}
+
+export interface ConnectorOAuthUrl {
+  url: string;
+}
+
+export interface ConnectorOAuthExchangePayload {
+  code: string;
+  redirectUri: string;
 }
 
 export interface ConnectorCheckResult {
@@ -529,6 +552,7 @@ export interface TaskRun {
   dueAt: string | null;
   taskGuid: string;
   notifyMessageId: string;
+  executionIdentity: '' | ExecutionIdentity;
   retryCount: number;
   notifyAttempts: number;
   nextRetryAt: string | null;

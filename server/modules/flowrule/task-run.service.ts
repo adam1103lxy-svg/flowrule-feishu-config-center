@@ -27,6 +27,7 @@ import type {
 } from '@shared/api.interface';
 import { AuditService } from './audit.service';
 import { FeishuClientService } from './feishu-client.service';
+import { encryptSecret } from './secret-box';
 
 const MAX_AUTO_RETRY = 3;
 const MAX_NOTIFY_ATTEMPTS = 5;
@@ -34,6 +35,9 @@ const LEASE_MINUTES = 10;
 const RETRY_BASE_DELAY_MINUTES = 5;
 
 const ACTIVE_EXECUTING_STATUSES: TaskRunStatus[] = ['pending', 'notify_pending', 'failed'];
+type ExecutionContext =
+  | { identity: 'app'; client: import('@larksuiteoapi/node-sdk').Client }
+  | { identity: 'user'; accessToken: string };
 
 const toTaskRun = (
   row: typeof taskRun.$inferSelect,
@@ -62,6 +66,7 @@ const toTaskRun = (
   dueAt: row.dueAt ? row.dueAt.toISOString() : null,
   taskGuid: row.taskGuid,
   notifyMessageId: row.notifyMessageId,
+  executionIdentity: row.executionIdentity as TaskRun['executionIdentity'],
   retryCount: row.retryCount,
   notifyAttempts: row.notifyAttempts,
   nextRetryAt: row.nextRetryAt ? row.nextRetryAt.toISOString() : null,
@@ -282,33 +287,96 @@ export class TaskRunService {
         .where(eq(taskRun.id, row.id));
       return;
     }
-    const client = this.feishuClientService.getClient(row.connectionId, credential);
+    let context: ExecutionContext;
+    try {
+      context = await this.resolveExecutionContext(conn!, credential);
+    } catch (error) {
+      await this.markFailure(row, `执行身份不可用: ${toMessage(error)}`);
+      return;
+    }
+    await this.db
+      .update(taskRun)
+      .set({ executionIdentity: context.identity, updatedAt: new Date() })
+      .where(eq(taskRun.id, row.id));
+    const executingRow = { ...row, executionIdentity: context.identity };
 
     if (row.status === 'notify_pending') {
-      await this.runNotify(row, client);
+      await this.runNotify(executingRow, context);
       return;
     }
 
     if (row.status === 'failed' && row.taskGuid !== '') {
-      await this.runNotify(row, client);
+      await this.runNotify(executingRow, context);
       return;
     }
 
-    await this.runCreate(row, client);
+    await this.runCreate(executingRow, context);
+  }
+
+  private async resolveExecutionContext(
+    conn: typeof connector.$inferSelect,
+    credential: { appId: string; appSecret: string },
+  ): Promise<ExecutionContext> {
+    if (conn.executionIdentity === 'user') {
+      try {
+        let accessToken = this.feishuClientService.resolveEncryptedValue(
+          conn.userAccessTokenEnc,
+        );
+        if (!accessToken) throw new Error('尚未完成用户 OAuth 授权');
+        if (!conn.userTokenExpiresAt || conn.userTokenExpiresAt.getTime() <= Date.now()) {
+          const refreshToken = this.feishuClientService.resolveEncryptedValue(
+            conn.userRefreshTokenEnc,
+          );
+          if (!refreshToken) throw new Error('用户令牌已过期且无刷新令牌');
+          const refreshed = await this.feishuClientService.refreshUserToken(
+            credential,
+            refreshToken,
+          );
+          accessToken = refreshed.accessToken;
+          await this.db
+            .update(connector)
+            .set({
+              userAccessTokenEnc: encryptSecret(refreshed.accessToken),
+              userRefreshTokenEnc: encryptSecret(refreshed.refreshToken),
+              userTokenExpiresAt: new Date(
+                Date.now() + Math.max(60, refreshed.expiresIn - 60) * 1000,
+              ),
+              userRefreshExpiresAt: refreshed.refreshExpiresIn
+                ? new Date(Date.now() + refreshed.refreshExpiresIn * 1000)
+                : conn.userRefreshExpiresAt,
+              userOpenId: refreshed.openId || conn.userOpenId,
+              userName: refreshed.name || conn.userName,
+              updatedAt: new Date(),
+            })
+            .where(eq(connector.id, conn.id));
+        }
+        return { identity: 'user', accessToken };
+      } catch (error) {
+        if (!conn.allowIdentityFallback) throw error;
+        this.logger.warn(`用户身份不可用，按连接器配置回退应用身份: ${toMessage(error)}`);
+      }
+    }
+    return {
+      identity: 'app',
+      client: this.feishuClientService.getClient(conn.id, credential),
+    };
   }
 
   private async runCreate(
     row: typeof taskRun.$inferSelect,
-    client: import('@larksuiteoapi/node-sdk').Client,
+    context: ExecutionContext,
   ): Promise<void> {
     try {
-      const created = await this.feishuClientService.createTask(client, {
+      const options = {
         summary: row.taskTitle,
         description: row.taskDesc,
         assigneeOpenId: row.assigneeOpenId,
         dueAt: row.dueAt,
         clientToken: row.clientToken,
-      });
+      };
+      const created = context.identity === 'user'
+        ? await this.feishuClientService.createTaskAsUser(context.accessToken, options)
+        : await this.feishuClientService.createTask(context.client, options);
       // 创建成功后先持久化 task_guid，再进行回读核验与通知
       const [saved] = await this.db
         .update(taskRun)
@@ -328,7 +396,7 @@ export class TaskRunService {
         entityName: row.taskTitle,
         summary: `飞书待办创建成功：「${row.taskTitle}」（负责人 ${row.assigneeName || row.assigneeOpenId}，guid ${created.guid}）`,
       });
-      await this.verifyAndNotify(saved, client);
+      await this.verifyAndNotify(saved, context);
     } catch (error) {
       await this.markFailure(row, `创建飞书待办失败: ${toMessage(error)}`);
     }
@@ -336,10 +404,12 @@ export class TaskRunService {
 
   private async verifyAndNotify(
     row: typeof taskRun.$inferSelect,
-    client: import('@larksuiteoapi/node-sdk').Client,
+    context: ExecutionContext,
   ): Promise<void> {
     try {
-      const verified = await this.feishuClientService.getTask(client, row.taskGuid);
+      const verified = context.identity === 'user'
+        ? await this.feishuClientService.getTaskAsUser(context.accessToken, row.taskGuid)
+        : await this.feishuClientService.getTask(context.client, row.taskGuid);
       if (verified.guid !== row.taskGuid) {
         throw new Error(`回读 guid 不一致：期望 ${row.taskGuid}，实际 ${verified.guid}`);
       }
@@ -348,7 +418,7 @@ export class TaskRunService {
           `回读负责人不一致：期望 ${row.assigneeOpenId}，实际 [${verified.assigneeOpenIds.join(', ')}]`,
         );
       }
-      await this.runNotify(row, client);
+      await this.runNotify(row, context);
     } catch (error) {
       const message = `Task v2 回读核验失败: ${toMessage(error)}`;
       await this.db
@@ -367,7 +437,7 @@ export class TaskRunService {
 
   private async runNotify(
     row: typeof taskRun.$inferSelect,
-    client: import('@larksuiteoapi/node-sdk').Client,
+    context: ExecutionContext,
   ): Promise<void> {
     if (row.notifyChatId === '') return;
     if (row.notifyChatId === row.sourceChatId) {
@@ -403,11 +473,17 @@ export class TaskRunService {
       .filter((line: string) => line !== '')
       .join('\n');
     try {
-      const messageId = await this.feishuClientService.sendTextMessage(
-        client,
-        row.notifyChatId,
-        text,
-      );
+      const messageId = context.identity === 'user'
+        ? await this.feishuClientService.sendTextMessageAsUser(
+            context.accessToken,
+            row.notifyChatId,
+            text,
+          )
+        : await this.feishuClientService.sendTextMessage(
+            context.client,
+            row.notifyChatId,
+            text,
+          );
       await this.db
         .update(taskRun)
         .set({

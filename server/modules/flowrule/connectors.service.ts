@@ -12,6 +12,7 @@ import {
   type Connector,
   type ConnectorCheckResult,
   type ConnectorPayload,
+  type ConnectorOAuthUrl,
   type DiscoveredChat,
   type WorkspaceSettings,
 } from '@shared/api.interface';
@@ -38,6 +39,11 @@ const toConnector = (row: typeof connector.$inferSelect): Connector => ({
   status: row.status as Connector['status'],
   secretConfigured: row.appSecretEnc !== '',
   authStatus: row.authStatus as Connector['authStatus'],
+  executionIdentity: row.executionIdentity as Connector['executionIdentity'],
+  allowIdentityFallback: row.allowIdentityFallback,
+  userAuthorized: row.userAccessTokenEnc !== '' && !!row.userTokenExpiresAt,
+  userName: row.userName,
+  userTokenExpiresAt: row.userTokenExpiresAt?.toISOString() ?? null,
   discoveredChats: JSON.parse(row.discoveredChats) as DiscoveredChat[],
   createdAt: row.createdAt.toISOString(),
   updatedAt: row.updatedAt.toISOString(),
@@ -86,6 +92,8 @@ export class ConnectorsService {
         feishuAppId: payload.feishuAppId.trim(),
         appSecretEnc: appSecret !== '' ? encryptSecret(appSecret) : '',
         authStatus: 'unverified',
+        executionIdentity: payload.executionIdentity,
+        allowIdentityFallback: payload.allowIdentityFallback,
         discoveredChats: '[]',
         sourceGroups: payload.sourceGroups,
         notifyGroups: payload.notifyGroups,
@@ -130,6 +138,8 @@ export class ConnectorsService {
             }
           : {}),
         sourceGroups: payload.sourceGroups,
+        executionIdentity: payload.executionIdentity,
+        allowIdentityFallback: payload.allowIdentityFallback,
         notifyGroups: payload.notifyGroups,
         timezone: payload.timezone,
         ownerSource: payload.ownerSource,
@@ -248,6 +258,74 @@ export class ConnectorsService {
       userId,
     });
     return JSON.parse(updated.discoveredChats) as DiscoveredChat[];
+  }
+
+  async getUserOAuthUrl(
+    id: string,
+    redirectUri: string,
+  ): Promise<ConnectorOAuthUrl> {
+    const [row] = await this.db.select().from(connector).where(eq(connector.id, id));
+    if (!row) throw new NotFoundException('连接器不存在');
+    if (!/^https:\/\//.test(redirectUri)) {
+      throw new BadRequestException('OAuth 回调地址必须使用 HTTPS');
+    }
+    const credential = this.feishuClientService.resolveCredential(
+      row.feishuAppId,
+      row.appSecretEnc,
+    );
+    if (!credential) throw new BadRequestException('请先配置 App ID 与 App Secret');
+    return {
+      url: this.feishuClientService.buildUserAuthorizeUrl(
+        credential.appId,
+        redirectUri,
+        `flowrule:${row.id}`,
+      ),
+    };
+  }
+
+  async exchangeUserOAuth(
+    id: string,
+    code: string,
+    redirectUri: string,
+    userId: string,
+  ): Promise<Connector> {
+    const [row] = await this.db.select().from(connector).where(eq(connector.id, id));
+    if (!row) throw new NotFoundException('连接器不存在');
+    const credential = this.feishuClientService.resolveCredential(
+      row.feishuAppId,
+      row.appSecretEnc,
+    );
+    if (!credential) throw new BadRequestException('请先配置 App ID 与 App Secret');
+    const token = await this.feishuClientService.exchangeUserCode(
+      credential,
+      code,
+      redirectUri,
+    );
+    const now = Date.now();
+    const [updated] = await this.db
+      .update(connector)
+      .set({
+        userAccessTokenEnc: encryptSecret(token.accessToken),
+        userRefreshTokenEnc: token.refreshToken ? encryptSecret(token.refreshToken) : '',
+        userTokenExpiresAt: new Date(now + Math.max(60, token.expiresIn - 60) * 1000),
+        userRefreshExpiresAt: token.refreshExpiresIn
+          ? new Date(now + token.refreshExpiresIn * 1000)
+          : null,
+        userOpenId: token.openId,
+        userName: token.name || '已授权用户',
+        updatedAt: new Date(),
+      })
+      .where(eq(connector.id, id))
+      .returning();
+    await this.auditService.write({
+      action: 'connector_authorized',
+      entityType: 'connector',
+      entityId: row.id,
+      entityName: row.name,
+      summary: `用户身份授权成功：${token.name || token.openId || '已授权用户'}；令牌已加密保存且不回显`,
+      userId,
+    });
+    return toConnector(updated);
   }
 
   async getTimezoneMap(): Promise<Record<string, string>> {

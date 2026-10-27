@@ -41,6 +41,7 @@ import { cn } from '@client/src/lib/utils';
 import { getApiErrorMessage } from '@client/src/utils/api-error';
 import { formatDateTime } from '@client/src/utils/format';
 import {
+  EXECUTION_IDENTITY_LABELS,
   TASK_RUN_STATUSES,
   TASK_RUN_STATUS_LABELS,
   type TaskRun,
@@ -222,6 +223,13 @@ const RunsPage = () => {
       width: 160,
       render: (value: string) =>
         value ? <span className="font-mono text-xs break-all">{value}</span> : '—',
+    },
+    {
+      title: '执行身份',
+      dataIndex: 'executionIdentity',
+      width: 100,
+      render: (value: TaskRun['executionIdentity']) =>
+        value ? EXECUTION_IDENTITY_LABELS[value] : '待执行',
     },
     {
       title: '状态',
@@ -481,6 +489,11 @@ const RunsPage = () => {
                     ) : (
                       '—'
                     )}
+                  </DetailField>
+                  <DetailField label="实际执行身份">
+                    {detail.executionIdentity
+                      ? EXECUTION_IDENTITY_LABELS[detail.executionIdentity]
+                      : '尚未执行'}
                   </DetailField>
                   <DetailField label="task_guid">
                     {detail.taskGuid ? (

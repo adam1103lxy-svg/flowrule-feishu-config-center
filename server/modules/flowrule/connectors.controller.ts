@@ -6,12 +6,13 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   Req,
 } from '@nestjs/common';
 import { NeedLogin } from '@lark-apaas/fullstack-nestjs-core';
 import type { Request } from 'express';
 import { ConnectorsService } from './connectors.service';
-import { ConnectorPayloadDto } from './dtos';
+import { ConnectorOAuthExchangeDto, ConnectorPayloadDto } from './dtos';
 import { SeedService } from './seed.service';
 
 @Controller('api/connectors')
@@ -56,5 +57,27 @@ export class ConnectorsController {
   @Post(':id/sync-chats')
   async syncChats(@Req() req: Request, @Param('id') id: string) {
     return this.connectorsService.syncChats(id, req.userContext.userId);
+  }
+
+  @Get(':id/user-oauth-url')
+  async userOAuthUrl(
+    @Param('id') id: string,
+    @Query('redirectUri') redirectUri: string,
+  ) {
+    return this.connectorsService.getUserOAuthUrl(id, redirectUri);
+  }
+
+  @Post(':id/user-oauth-exchange')
+  async userOAuthExchange(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() dto: ConnectorOAuthExchangeDto,
+  ) {
+    return this.connectorsService.exchangeUserOAuth(
+      id,
+      dto.code,
+      dto.redirectUri,
+      req.userContext.userId,
+    );
   }
 }

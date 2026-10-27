@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { ComponentProps } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import {
   ListChecks,
+  KeyRound,
   LoaderCircle,
   Pencil,
   Plus,
@@ -75,10 +76,13 @@ import {
   CONNECTOR_STATUS_LABELS,
   OWNER_SOURCES,
   OWNER_SOURCE_LABELS,
+  EXECUTION_IDENTITIES,
+  EXECUTION_IDENTITY_LABELS,
   type Connector,
   type ConnectorAuthStatus,
   type ConnectorCheckResult,
   type ConnectorEnv,
+  type ExecutionIdentity,
   type ConnectorPayload,
   type DiscoveredChat,
 } from '@shared/api.interface';
@@ -89,6 +93,8 @@ import {
   useDeleteConnector,
   useSyncConnectorChats,
   useUpdateConnector,
+  exchangeConnectorUserOAuth,
+  getConnectorUserOAuthUrl,
 } from '@client/src/api/connectors';
 import { getApiErrorMessage } from '@client/src/utils/api-error';
 import { cn } from '@client/src/lib/utils';
@@ -149,6 +155,8 @@ const connectorFormSchema = z.object({
       '扫描周期需为 1-1440 的整数分钟',
     ),
   status: z.enum(CONNECTOR_STATUSES),
+  executionIdentity: z.enum(EXECUTION_IDENTITIES),
+  allowIdentityFallback: z.boolean(),
 });
 
 type ConnectorFormValues = z.infer<typeof connectorFormSchema>;
@@ -164,6 +172,8 @@ const DEFAULT_CONNECTOR_FORM: ConnectorFormValues = {
   ownerSource: 'contact',
   scanPeriodMinutes: '5',
   status: 'active',
+  executionIdentity: 'app',
+  allowIdentityFallback: false,
 };
 
 interface TagsInputProps extends Omit<ComponentProps<'input'>, 'value' | 'onChange'> {
@@ -241,6 +251,8 @@ const ConnectorFormDialog = ({ editing, onClose }: ConnectorFormDialogProps) => 
           ownerSource: editing.ownerSource,
           scanPeriodMinutes: String(editing.scanPeriodMinutes),
           status: editing.status,
+          executionIdentity: editing.executionIdentity,
+          allowIdentityFallback: editing.allowIdentityFallback,
         }
       : DEFAULT_CONNECTOR_FORM,
   });
@@ -269,6 +281,8 @@ const ConnectorFormDialog = ({ editing, onClose }: ConnectorFormDialogProps) => 
       ownerSource: data.ownerSource,
       scanPeriodMinutes: Number(data.scanPeriodMinutes),
       status: data.status,
+      executionIdentity: data.executionIdentity,
+      allowIdentityFallback: data.allowIdentityFallback,
     };
     try {
       if (editing) {
@@ -386,6 +400,52 @@ const ConnectorFormDialog = ({ editing, onClose }: ConnectorFormDialogProps) => 
                       <FormDescription>
                         仅在服务端加密存储，保存后不再回显。
                       </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="executionIdentity"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>任务执行身份</FormLabel>
+                      <Select onValueChange={field.onChange} value={field.value}>
+                        <FormControl>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {EXECUTION_IDENTITIES.map((identity: ExecutionIdentity) => (
+                            <SelectItem key={identity} value={identity}>
+                              {EXECUTION_IDENTITY_LABELS[identity]}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormDescription>
+                        应用身份适合无人值守；用户身份以已授权用户创建待办。
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="allowIdentityFallback"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>身份失败回退</FormLabel>
+                      <Select
+                        onValueChange={(value) => field.onChange(value === 'yes')}
+                        value={field.value ? 'yes' : 'no'}
+                      >
+                        <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl>
+                        <SelectContent>
+                          <SelectItem value="no">不允许（推荐）</SelectItem>
+                          <SelectItem value="yes">允许回退到应用身份</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormDescription>默认不静默切换；启用后用户身份失效才回退。</FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -647,6 +707,32 @@ const ConnectorsPage = () => {
   const syncMutation = useSyncConnectorChats();
   const deleteMutation = useDeleteConnector();
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('code');
+    const state = params.get('state') ?? '';
+    if (!code || !state.startsWith('flowrule:')) return;
+    const connectorId = state.slice('flowrule:'.length);
+    const redirectUri = `${window.location.origin}${window.location.pathname}`;
+    exchangeConnectorUserOAuth(connectorId, code, redirectUri)
+      .then(() => {
+        toast.success('用户身份授权成功');
+        window.history.replaceState({}, '', redirectUri);
+        void refetch();
+      })
+      .catch((err: unknown) => toast.error(getApiErrorMessage(err, '用户身份授权失败')));
+  }, [refetch]);
+
+  const handleUserAuthorize = async (connector: Connector) => {
+    try {
+      const redirectUri = `${window.location.origin}${window.location.pathname}`;
+      const result = await getConnectorUserOAuthUrl(connector.id, redirectUri);
+      window.location.assign(result.url);
+    } catch (err: unknown) {
+      toast.error(getApiErrorMessage(err, '无法发起用户身份授权'));
+    }
+  };
+
   const closeDelete = (open: boolean) => {
     if (!open) setDeleteTarget(null);
   };
@@ -758,6 +844,7 @@ const ConnectorsPage = () => {
                 <TableHead className="px-4">环境</TableHead>
                 <TableHead className="px-4">飞书 App ID</TableHead>
                 <TableHead className="px-4">授权状态</TableHead>
+                <TableHead className="px-4">执行身份</TableHead>
                 <TableHead className="px-4">Secret</TableHead>
                 <TableHead className="px-4">扫描周期</TableHead>
                 <TableHead className="px-4">状态</TableHead>
@@ -802,6 +889,18 @@ const ConnectorsPage = () => {
                     <AuthStatusBadge status={connector.authStatus} />
                   </TableCell>
                   <TableCell className="px-4 text-xs">
+                    <div className="space-y-1">
+                      <div>{EXECUTION_IDENTITY_LABELS[connector.executionIdentity]}</div>
+                      {connector.executionIdentity === 'user' ? (
+                        <div className={connector.userAuthorized ? 'text-success' : 'text-warning'}>
+                          {connector.userAuthorized
+                            ? `已授权${connector.userName ? ` · ${connector.userName}` : ''}`
+                            : '待授权'}
+                        </div>
+                      ) : null}
+                    </div>
+                  </TableCell>
+                  <TableCell className="px-4 text-xs">
                     {connector.secretConfigured ? (
                       <span className="text-success">已配置</span>
                     ) : (
@@ -826,6 +925,14 @@ const ConnectorsPage = () => {
                   </TableCell>
                   <TableCell className="px-4">
                     <div className="flex items-center justify-end gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label={`授权用户身份 ${connector.name}`}
+                        onClick={() => handleUserAuthorize(connector)}
+                      >
+                        <KeyRound />
+                      </Button>
                       <Button
                         variant="ghost"
                         size="icon"

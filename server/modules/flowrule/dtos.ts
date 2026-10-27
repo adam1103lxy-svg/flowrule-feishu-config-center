@@ -1,6 +1,7 @@
 import { Type, Transform } from 'class-transformer';
 import {
   IsArray,
+  IsBoolean,
   IsIn,
   IsInt,
   IsObject,
@@ -14,6 +15,7 @@ import {
   AUDIT_ACTIONS,
   CONNECTOR_ENVS,
   CONNECTOR_STATUSES,
+  EXECUTION_IDENTITIES,
   MESSAGE_TYPES,
   OWNER_SOURCES,
   RULE_STATUSES,
@@ -35,6 +37,12 @@ export class ConnectorPayloadDto {
   @IsOptional() @IsString() @MaxLength(255)
   feishuAppSecret?: string;
 
+  @IsIn(EXECUTION_IDENTITIES)
+  executionIdentity!: 'app' | 'user';
+
+  @IsBoolean()
+  allowIdentityFallback!: boolean;
+
   @IsArray() @IsString({ each: true })
   sourceGroups!: string[];
 
@@ -52,6 +60,14 @@ export class ConnectorPayloadDto {
 
   @IsIn(CONNECTOR_STATUSES)
   status!: 'active' | 'inactive';
+}
+
+export class ConnectorOAuthExchangeDto {
+  @IsString()
+  code!: string;
+
+  @IsString()
+  redirectUri!: string;
 }
 
 export class RuleConfigPartDto {

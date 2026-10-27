@@ -4,6 +4,7 @@ import type {
   Connector,
   ConnectorCheckResult,
   ConnectorPayload,
+  ConnectorOAuthUrl,
   DiscoveredChat,
 } from '@shared/api.interface';
 
@@ -83,6 +84,23 @@ export const useCheckConnector = () => {
 export const syncConnectorChats = (id: string): Promise<DiscoveredChat[]> =>
   axiosForBackend
     .post(`/api/connectors/${id}/sync-chats`)
+    .then((res) => res.data);
+
+export const getConnectorUserOAuthUrl = (
+  id: string,
+  redirectUri: string,
+): Promise<ConnectorOAuthUrl> =>
+  axiosForBackend
+    .get(`/api/connectors/${id}/user-oauth-url`, { params: { redirectUri } })
+    .then((res) => res.data);
+
+export const exchangeConnectorUserOAuth = (
+  id: string,
+  code: string,
+  redirectUri: string,
+): Promise<Connector> =>
+  axiosForBackend
+    .post(`/api/connectors/${id}/user-oauth-exchange`, { code, redirectUri })
     .then((res) => res.data);
 
 export const useSyncConnectorChats = () => {

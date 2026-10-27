@@ -9,6 +9,8 @@ import {
 import { decryptSecret } from './secret-box';
 
 const TOKEN_URL = 'https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal';
+const OAUTH_TOKEN_URL = 'https://open.feishu.cn/open-apis/authen/v2/oauth/token';
+const OPEN_API = 'https://open.feishu.cn/open-apis';
 
 export interface FeishuCredential {
   appId: string;
@@ -35,6 +37,15 @@ export interface DiscoveredChatInfo {
 export interface CredentialCheckResult {
   authorized: boolean;
   note: string;
+}
+
+export interface UserOAuthToken {
+  accessToken: string;
+  refreshToken: string;
+  expiresIn: number;
+  refreshExpiresIn: number;
+  openId: string;
+  name: string;
 }
 
 interface TaskV2Member {
@@ -91,6 +102,10 @@ export class FeishuClientService {
     }
   }
 
+  resolveEncryptedValue(value: string): string {
+    return value ? decryptSecret(value) : '';
+  }
+
   async verifyCredentials(
     credential: FeishuCredential,
   ): Promise<CredentialCheckResult> {
@@ -120,6 +135,158 @@ export class FeishuClientService {
         note: `无法连接飞书开放平台：${toMessage(error)}`,
       };
     }
+  }
+
+  buildUserAuthorizeUrl(appId: string, redirectUri: string, state: string): string {
+    const query = new URLSearchParams({
+      app_id: appId,
+      redirect_uri: redirectUri,
+      scope: 'task:task:read task:task:write im:message offline_access',
+      state,
+    });
+    return `https://accounts.feishu.cn/open-apis/authen/v1/authorize?${query.toString()}`;
+  }
+
+  async exchangeUserCode(
+    credential: FeishuCredential,
+    code: string,
+    redirectUri: string,
+  ): Promise<UserOAuthToken> {
+    const resp = await axios.post(
+      OAUTH_TOKEN_URL,
+      {
+        grant_type: 'authorization_code',
+        client_id: credential.appId,
+        client_secret: credential.appSecret,
+        code,
+        redirect_uri: redirectUri,
+      },
+      { timeout: 10_000 },
+    );
+    const data = resp.data as Record<string, unknown>;
+    if (data.code !== 0 || typeof data.access_token !== 'string') {
+      throw new Error(`用户身份授权失败 code=${String(data.code)} msg=${String(data.error_description ?? data.msg ?? '未知错误')}`);
+    }
+    return {
+      accessToken: data.access_token,
+      refreshToken: String(data.refresh_token ?? ''),
+      expiresIn: Number(data.expires_in ?? 0),
+      refreshExpiresIn: Number(data.refresh_token_expires_in ?? 0),
+      openId: String(data.open_id ?? ''),
+      name: String(data.name ?? ''),
+    };
+  }
+
+  async refreshUserToken(
+    credential: FeishuCredential,
+    refreshToken: string,
+  ): Promise<UserOAuthToken> {
+    const resp = await axios.post(
+      OAUTH_TOKEN_URL,
+      {
+        grant_type: 'refresh_token',
+        client_id: credential.appId,
+        client_secret: credential.appSecret,
+        refresh_token: refreshToken,
+      },
+      { timeout: 10_000 },
+    );
+    const data = resp.data as Record<string, unknown>;
+    if (data.code !== 0 || typeof data.access_token !== 'string') {
+      throw new Error(`用户身份刷新失败 code=${String(data.code)} msg=${String(data.error_description ?? data.msg ?? '未知错误')}`);
+    }
+    return {
+      accessToken: data.access_token,
+      refreshToken: String(data.refresh_token ?? refreshToken),
+      expiresIn: Number(data.expires_in ?? 0),
+      refreshExpiresIn: Number(data.refresh_token_expires_in ?? 0),
+      openId: String(data.open_id ?? ''),
+      name: String(data.name ?? ''),
+    };
+  }
+
+  async createTaskAsUser(
+    accessToken: string,
+    options: {
+      summary: string;
+      description: string;
+      assigneeOpenId: string;
+      dueAt: Date | null;
+      clientToken: string;
+    },
+  ): Promise<CreatedTask> {
+    const task: Record<string, unknown> = {
+      summary: options.summary,
+      description: options.description,
+      members: [{ id: options.assigneeOpenId, type: 'user', role: 'assignee' }],
+    };
+    if (options.dueAt) {
+      task.due = {
+        timestamp: String(Math.floor(options.dueAt.getTime() / 1000)),
+        is_all_day: false,
+      };
+    }
+    const resp = await axios.post(
+      `${OPEN_API}/task/v2/tasks`,
+      task,
+      {
+        params: { user_id_type: 'open_id', client_token: options.clientToken },
+        headers: { Authorization: `Bearer ${accessToken}` },
+        timeout: 10_000,
+      },
+    );
+    const body = resp.data as { code?: number; msg?: string; data?: { task?: TaskV2Task } };
+    if (body.code !== 0 || !body.data?.task?.guid) {
+      throw new Error(`用户身份 Task v2 创建失败 code=${body.code} msg=${body.msg}`);
+    }
+    return { guid: body.data.task.guid, url: body.data.task.url ?? '' };
+  }
+
+  async getTaskAsUser(accessToken: string, guid: string): Promise<VerifiedTask> {
+    const resp = await axios.get(`${OPEN_API}/task/v2/tasks/${encodeURIComponent(guid)}`, {
+      params: { user_id_type: 'open_id' },
+      headers: { Authorization: `Bearer ${accessToken}` },
+      timeout: 10_000,
+    });
+    const body = resp.data as { code?: number; msg?: string; data?: { task?: TaskV2Task } };
+    const task = body.data?.task;
+    if (body.code !== 0 || !task) {
+      throw new Error(`用户身份 Task v2 回读失败 code=${body.code} msg=${body.msg}`);
+    }
+    return {
+      guid: task.guid ?? guid,
+      url: task.url ?? '',
+      summary: task.summary ?? '',
+      assigneeOpenIds: (task.members ?? [])
+        .filter((member) => member.role === 'assignee')
+        .map((member) => member.id ?? '')
+        .filter(Boolean),
+    };
+  }
+
+  async sendTextMessageAsUser(
+    accessToken: string,
+    chatId: string,
+    text: string,
+  ): Promise<string> {
+    const resp = await axios.post(
+      `${OPEN_API}/im/v1/messages`,
+      {
+        receive_id: chatId,
+        msg_type: 'text',
+        content: JSON.stringify({ text }),
+      },
+      {
+        params: { receive_id_type: 'chat_id' },
+        headers: { Authorization: `Bearer ${accessToken}` },
+        timeout: 10_000,
+      },
+    );
+    const body = resp.data as { code?: number; msg?: string; data?: { message_id?: string } };
+    if (body.code !== 0 || !body.data?.message_id) {
+      throw new Error(`用户身份消息发送失败 code=${body.code} msg=${body.msg}`);
+    }
+    return body.data.message_id;
   }
 
   async createTask(
@@ -154,7 +321,7 @@ export class FeishuClientService {
       params: {
         user_id_type: 'open_id',
         client_token: options.clientToken,
-      },
+      } as { user_id_type: string },
       data,
     });
     if (resp.code !== 0) {
