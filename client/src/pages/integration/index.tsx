@@ -105,7 +105,7 @@ for rule in config["rules"]:
 const BEARER_EXAMPLE = `# 所有 /openapi/v1/** 请求必须携带妙搭 Open API Key
 Authorization: Bearer <miaoda-open-api-key>
 
-# Key 由应用管理员在妙达平台「开放 API Key 管理」中创建并绑定本应用；
+# Key 由应用管理员在妙搭平台「开放 API Key 管理」中创建并绑定本应用；
 # 原始 Key 仅创建时展示一次，本应用界面不管理密钥。
 # 缺失、无效或已吊销的 Key 返回 401，不会回退到匿名访问`;
 
@@ -152,7 +152,7 @@ const ENV_VARS: EnvVarRow[] = [
   },
   {
     name: 'FLOWRULE_API_KEY',
-    description: '妙搭 Open API Key（Bearer 鉴权）；由应用管理员在妙达平台「开放 API Key 管理」中创建，原始 Key 仅展示一次',
+    description: '妙搭 Open API Key（Bearer 鉴权）；由应用管理员在妙搭平台「开放 API Key 管理」中创建，原始 Key 仅展示一次',
     example: '创建后自行填入（不内置示例值）',
   },
   {
@@ -592,7 +592,7 @@ const IntegrationPage = () => {
           <CardHeader className="p-5">
             <CardTitle className="text-base">鉴权与签名</CardTitle>
             <CardDescription>
-              妙达 Open API Key Bearer 鉴权示例；签名校验为 Webhook 扩展方案预留设计（当前未启用）。
+              妙搭 Open API Key Bearer 鉴权示例；签名校验为 Webhook 扩展方案预留设计（当前未启用）。
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4 p-5 pt-0">
@@ -708,7 +708,7 @@ const IntegrationPage = () => {
             <CardContent className="p-5 pt-0">
               <SectionList
                 items={[
-                  'Key 由应用管理员在妙达平台「开放 API Key 管理」中创建并绑定本应用，本应用界面不管理、不存储任何密钥。',
+                  'Key 由应用管理员在妙搭平台「开放 API Key 管理」中创建并绑定本应用，本应用界面不管理、不存储任何密钥。',
                   '原始 Key 仅创建时展示一次，请立即保存到你的密钥管理系统。',
                   'Key 丢失后只能吊销旧 Key 并重新创建；吊销后旧 Key 立即失效。',
                   '本演示环境不内置任何真实密钥。',
