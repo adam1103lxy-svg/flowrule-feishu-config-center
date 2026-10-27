@@ -135,13 +135,11 @@ export class FeishuClientService {
     const data: {
       summary: string;
       description: string;
-      client_token: string;
       members: { id: string; type: 'user'; role: 'assignee' }[];
       due?: { timestamp: string; is_all_day: boolean };
     } = {
       summary: options.summary,
       description: options.description,
-      client_token: options.clientToken,
       members: [
         { id: options.assigneeOpenId, type: 'user', role: 'assignee' },
       ],
@@ -153,7 +151,10 @@ export class FeishuClientService {
       };
     }
     const resp = await client.task.v2.task.create({
-      params: { user_id_type: 'open_id' },
+      params: {
+        user_id_type: 'open_id',
+        client_token: options.clientToken,
+      },
       data,
     });
     if (resp.code !== 0) {
