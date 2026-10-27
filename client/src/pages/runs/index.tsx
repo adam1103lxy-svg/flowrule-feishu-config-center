@@ -198,7 +198,19 @@ const RunsPage = () => {
       render: (value: string, record: TaskRun) =>
         record.taskGuid ? (
           <span className="flex items-center gap-1">
-            <span className="truncate font-mono text-xs">{record.taskGuid}</span>
+            {record.taskUrl ? (
+              <a
+                href={record.taskUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="truncate font-mono text-xs text-primary underline-offset-4 hover:underline"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {record.taskGuid}
+              </a>
+            ) : (
+              <span className="truncate font-mono text-xs">{record.taskGuid}</span>
+            )}
             <Button
               type="button"
               variant="ghost"
@@ -512,6 +524,20 @@ const RunsPage = () => {
                           <Copy />
                         </Button>
                       </span>
+                    ) : (
+                      '—'
+                    )}
+                  </DetailField>
+                  <DetailField label="飞书待办">
+                    {detail.taskUrl ? (
+                      <a
+                        href={detail.taskUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-primary underline-offset-4 hover:underline"
+                      >
+                        打开待办
+                      </a>
                     ) : (
                       '—'
                     )}

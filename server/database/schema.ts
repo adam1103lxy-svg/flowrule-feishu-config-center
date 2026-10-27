@@ -142,6 +142,7 @@ export const taskRun = pgTable("task_run", {
   runAt: customTimestamptz("run_at", { precision: 3 }).notNull(),
   dueAt: customTimestamptz("due_at", { precision: 3 }),
   taskGuid: varchar("task_guid", { length: 64 }).notNull(),
+  taskUrl: text("task_url").notNull().default(''),
   notifyMessageId: varchar("notify_message_id", { length: 128 }).notNull(),
   executionIdentity: varchar("execution_identity", { length: 16 }).notNull().default(''),
   notifyAttempts: integer("notify_attempts").notNull().default(0),

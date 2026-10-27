@@ -65,6 +65,7 @@ const toTaskRun = (
   runAt: row.runAt.toISOString(),
   dueAt: row.dueAt ? row.dueAt.toISOString() : null,
   taskGuid: row.taskGuid,
+  taskUrl: row.taskUrl,
   notifyMessageId: row.notifyMessageId,
   executionIdentity: row.executionIdentity as TaskRun['executionIdentity'],
   retryCount: row.retryCount,
@@ -301,12 +302,12 @@ export class TaskRunService {
     const executingRow = { ...row, executionIdentity: context.identity };
 
     if (row.status === 'notify_pending') {
-      await this.runNotify(executingRow, context);
+      await this.verifyAndNotify(executingRow, context);
       return;
     }
 
     if (row.status === 'failed' && row.taskGuid !== '') {
-      await this.runNotify(executingRow, context);
+      await this.verifyAndNotify(executingRow, context);
       return;
     }
 
@@ -383,6 +384,7 @@ export class TaskRunService {
         .set({
           status: 'created',
           taskGuid: created.guid,
+          taskUrl: created.url,
           lastError: '',
           retryCount: 0,
           updatedAt: new Date(),
@@ -418,7 +420,12 @@ export class TaskRunService {
           `回读负责人不一致：期望 ${row.assigneeOpenId}，实际 [${verified.assigneeOpenIds.join(', ')}]`,
         );
       }
-      await this.runNotify(row, context);
+      const [verifiedRow] = await this.db
+        .update(taskRun)
+        .set({ taskUrl: verified.url, updatedAt: new Date() })
+        .where(eq(taskRun.id, row.id))
+        .returning();
+      await this.runNotify(verifiedRow, context);
     } catch (error) {
       const message = `Task v2 回读核验失败: ${toMessage(error)}`;
       await this.db
@@ -459,15 +466,17 @@ export class TaskRunService {
       });
       return;
     }
-    const taskUrl = row.taskGuid !== '' ? `https://feishu.cn/task?guid=${row.taskGuid}` : '';
+    const assignee = row.assigneeOpenId
+      ? `<at user_id="${row.assigneeOpenId}">${row.assigneeName || '负责人'}</at>`
+      : '未识别';
     const text = [
-      '【FlowRule】规则已创建飞书待办',
+      '【FlowRule】飞书待办已创建',
       `规则：${row.ruleName}`,
       `待办：${row.taskTitle}`,
-      `负责人：${row.assigneeName || row.assigneeOpenId}`,
+      `负责人：${assignee}`,
       row.dueAt ? `截止：${row.dueAt.toISOString()}` : '截止：未设置',
       row.taskGuid !== '' ? `待办 GUID：${row.taskGuid}` : '',
-      taskUrl !== '' ? `待办链接：${taskUrl}` : '待办链接请到飞书任务中心查看',
+      row.taskUrl !== '' ? `打开待办：${row.taskUrl}` : '打开待办：请到飞书任务中心按 GUID 查询',
       `来源消息：${row.sourceChatName || row.sourceChatId} · ${row.messageId}`,
     ]
       .filter((line: string) => line !== '')

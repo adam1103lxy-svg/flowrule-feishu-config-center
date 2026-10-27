@@ -551,6 +551,7 @@ export interface TaskRun {
   runAt: string;
   dueAt: string | null;
   taskGuid: string;
+  taskUrl: string;
   notifyMessageId: string;
   executionIdentity: '' | ExecutionIdentity;
   retryCount: number;

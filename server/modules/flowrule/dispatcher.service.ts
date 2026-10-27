@@ -309,6 +309,7 @@ export class DispatcherService {
         runAt: new Date(result.runAt),
         dueAt,
         taskGuid: '',
+        taskUrl: '',
         notifyMessageId: '',
         notifyAttempts: 0,
         retryCount: 0,
