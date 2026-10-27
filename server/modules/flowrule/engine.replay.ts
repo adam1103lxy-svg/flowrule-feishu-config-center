@@ -276,6 +276,28 @@ const sourceNotifyAllowed = validateRuleConfig(normalizeRuleConfig({
 }));
 check('P0·来源群通知显式放行', sourceNotifyAllowed.passed, true);
 
+// 完整迁移：必须 @ 指定人员，而不是任意 @
+const requiredMentionRule = baseRule({ trigger: { match: 'all', conditions: [
+  { type: 'keyword', keywords: ['实际发布'] },
+  { type: 'must_mention', mentionIds: ['ou_bot'] },
+] } });
+check('迁移·指定@命中', simulateRule(requiredMentionRule,
+  input({ messageText: '实际发布 应用：Alpha 版本：v1.0.0', mentions: ['ou_bot'] }),
+  'Asia/Shanghai').matched, true);
+check('迁移·其他@不误命中', simulateRule(requiredMentionRule,
+  input({ messageText: '实际发布 应用：Alpha 版本：v1.0.0', mentions: ['ou_other'] }),
+  'Asia/Shanghai').matched, false);
+
+// 完整迁移：静态与业务对象映射必须输出真实负责人 open_id
+check('迁移·静态负责人', simulateRule(
+  baseRule({ assignee: { mode: 'static', staticUsers: ['ou_owner'] } }),
+  input({ messageText: '实际发布 应用：Alpha 版本：v1.0.0' }), 'Asia/Shanghai',
+).assignees, ['ou_owner']);
+check('迁移·对象映射负责人', simulateRule(
+  baseRule({ assignee: { mode: 'external_map', externalMap: [{ key: 'Alpha', user: 'ou_alpha' }] } }),
+  input({ messageText: '实际发布 应用：Alpha 版本：v1.0.0' }), 'Asia/Shanghai',
+).assignees, ['ou_alpha']);
+
 if (failures > 0) {
   console.error(`\n${failures} 个用例失败`);
   process.exit(1);
