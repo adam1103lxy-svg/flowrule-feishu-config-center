@@ -72,6 +72,16 @@ const toTaskRun = (
 });
 
 const toMessage = (error: unknown): string => {
+  if (error && typeof error === 'object' && 'response' in error) {
+    const response = (error as { response?: { data?: unknown } }).response;
+    if (response?.data !== undefined) {
+      try {
+        return JSON.stringify(response.data);
+      } catch {
+        // Fall through to the ordinary error message.
+      }
+    }
+  }
   if (error instanceof Error) return error.message;
   return String(error);
 };
