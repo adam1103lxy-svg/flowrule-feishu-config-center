@@ -221,16 +221,14 @@ const RuleForm = ({ ruleId, rule }: RuleFormProps) => {
     onInvalid,
   );
 
-  const openPublish = form.handleSubmit(
-    (data: RuleFormValues) => {
-      if (!ruleId) return;
-      setPublishBody(buildBody(data));
-      setChangelog('');
-      setPublishError(null);
-      setPublishOpen(true);
-    },
-    onInvalid,
-  );
+  const openPublish = () => {
+    if (!ruleId) return;
+    /* 发布不走前端表单校验：阻断项由服务端发布校验在弹窗内展示，草稿字段未补齐也可点发布看阻断原因 */
+    setPublishBody(buildBody(form.getValues()));
+    setChangelog('');
+    setPublishError(null);
+    setPublishOpen(true);
+  };
 
   const confirmPublish = async () => {
     if (!ruleId || !publishBody) return;

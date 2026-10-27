@@ -281,10 +281,6 @@ export class RulesService {
     };
     validation.passed = validation.issues.length === 0;
     if (!validation.passed) {
-      await this.db
-        .update(rule)
-        .set({ status: 'failed', updatedAt: new Date() })
-        .where(eq(rule.id, id));
       await this.auditService.write({
         action: 'rule_published',
         entityType: 'rule',

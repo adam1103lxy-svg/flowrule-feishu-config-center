@@ -377,7 +377,11 @@ export const simulateRule = (
 
   const senderAllowed =
     config.allowedSenders.length === 0 ||
-    config.allowedSenders.some((s) => s.openId && s.openId === input.sender);
+    config.allowedSenders.some(
+      (s) =>
+        (s.openId && s.openId === input.sender) ||
+        (!s.openId && s.name && s.name === input.sender),
+    );
   trace.push({
     step: 'sender-permission',
     label: '允许触发人',
