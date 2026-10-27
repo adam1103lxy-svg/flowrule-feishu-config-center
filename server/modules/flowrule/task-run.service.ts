@@ -163,8 +163,8 @@ export class TaskRunService {
       .set({
         status: nextStatus,
         nextRetryAt: new Date(),
-        leaseOwner: this.leaseOwner,
-        leaseExpiresAt: new Date(Date.now() + LEASE_MINUTES * 60_000),
+        leaseOwner: '',
+        leaseExpiresAt: null,
         updatedAt: new Date(),
       })
       .where(eq(taskRun.id, id))
