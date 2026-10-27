@@ -45,11 +45,6 @@ export const ExtractionSection = ({ form }: SectionProps) => {
       title="业务对象 / 版本提取"
       description="用正则捕获组从消息中提取业务对象标识与版本号，供模板变量使用。"
     >
-      <FormField control={form.control} name="executionMode" render={({ field }) => (
-        <FormItem className="w-full sm:w-[280px]"><FormLabel>运行模式</FormLabel><Select onValueChange={field.onChange} value={field.value}>
-          <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl><SelectContent><SelectItem value="live">正式执行</SelectItem><SelectItem value="shadow">影子验证（不建待办、不通知）</SelectItem></SelectContent>
-        </Select><FormDescription>迁移期先用影子模式对账，确认无重复或漏触发后再切正式执行。</FormDescription><FormMessage /></FormItem>
-      )} />
       <FormField
         control={form.control}
         name="extractionEnabled"
@@ -351,6 +346,11 @@ export const TimingSection = ({ form }: SectionProps) => {
       title="执行时机"
       description="规则命中后何时创建任务。"
     >
+      <FormField control={form.control} name="executionMode" render={({ field }) => (
+        <FormItem className="w-full sm:w-[280px]"><FormLabel>运行模式</FormLabel><Select onValueChange={field.onChange} value={field.value}>
+          <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl><SelectContent><SelectItem value="live">正式执行</SelectItem><SelectItem value="shadow">影子验证（不建待办、不通知）</SelectItem></SelectContent>
+        </Select><FormDescription>迁移期先用影子模式对账，确认无重复或漏触发后再切正式执行。</FormDescription><FormMessage /></FormItem>
+      )} />
       <div className="grid gap-4 sm:grid-cols-2">
         <FormField control={form.control} name="contextMode" render={({ field }) => (
           <FormItem><FormLabel>消息上下文</FormLabel><Select onValueChange={field.onChange} value={field.value}>
