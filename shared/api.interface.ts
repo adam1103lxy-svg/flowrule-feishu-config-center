@@ -93,9 +93,16 @@ export const SENDER_ROLE_LABELS: Record<SenderRole, string> = {
   any: '任意',
 };
 
-export const ASSIGNER_MODES = ['mention', 'sender', 'static', 'external_map'] as const;
+export const ASSIGNER_MODES = [
+  'mention_first_else_sender',
+  'mention',
+  'sender',
+  'static',
+  'external_map',
+] as const;
 export type AssignerMode = (typeof ASSIGNER_MODES)[number];
 export const ASSIGNER_MODE_LABELS: Record<AssignerMode, string> = {
+  mention_first_else_sender: '明确@一人优先，否则发送者',
   mention: '被@人',
   sender: '发送者',
   static: '静态人员',
@@ -110,6 +117,20 @@ export const TIMING_MODE_LABELS: Record<TimingMode, string> = {
   fixed_next_day: '固定次日时间',
 };
 
+export const DUE_POLICY_MODES = ['none', 'relative_minutes', 'fixed_next_day'] as const;
+export type DuePolicyMode = (typeof DUE_POLICY_MODES)[number];
+export const DUE_POLICY_MODE_LABELS: Record<DuePolicyMode, string> = {
+  none: '不设置截止时间',
+  relative_minutes: '创建后相对延迟',
+  fixed_next_day: '固定次日时间',
+};
+
+export const RULE_ACTIONS = ['create_task'] as const;
+export type RuleAction = (typeof RULE_ACTIONS)[number];
+export const RULE_ACTION_LABELS: Record<RuleAction, string> = {
+  create_task: '创建飞书待办',
+};
+
 export const NOTIFY_TARGET_TYPES = ['source_group', 'notify_group', 'user'] as const;
 export type NotifyTargetType = (typeof NOTIFY_TARGET_TYPES)[number];
 export const NOTIFY_TARGET_TYPE_LABELS: Record<NotifyTargetType, string> = {
@@ -121,6 +142,8 @@ export const NOTIFY_TARGET_TYPE_LABELS: Record<NotifyTargetType, string> = {
 export const DEDUP_FIELDS = [
   'message_id',
   'object_key',
+  'object_version',
+  'release_ratio',
   'rule_id',
   'source_group',
   'sender',
@@ -128,8 +151,10 @@ export const DEDUP_FIELDS = [
 export type DedupField = (typeof DEDUP_FIELDS)[number];
 export const DEDUP_FIELD_LABELS: Record<DedupField, string> = {
   message_id: '消息ID',
-  object_key: '业务对象',
-  rule_id: '规则ID',
+  object_key: '应用/业务对象',
+  object_version: '版本',
+  release_ratio: '发布比例',
+  rule_id: '规则',
   source_group: '来源群',
   sender: '发送者',
 };
@@ -162,7 +187,16 @@ export const AUDIT_ACTIONS = [
   'connector_updated',
   'connector_deleted',
   'connector_checked',
+  'connector_authorized',
+  'connector_synced',
   'settings_updated',
+  'task_created',
+  'task_notified',
+  'task_failed',
+  'task_retried',
+  'task_cancelled',
+  'message_received',
+  'task_scheduled',
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 export const AUDIT_ACTION_LABELS: Record<AuditAction, string> = {
@@ -180,6 +214,43 @@ export const AUDIT_ACTION_LABELS: Record<AuditAction, string> = {
   connector_deleted: '连接器删除',
   connector_checked: '配置检查',
   settings_updated: '设置更新',
+  connector_authorized: '连接授权校验',
+  connector_synced: '群列表同步',
+  task_created: '待办创建',
+  task_notified: '创建结果通知',
+  task_failed: '执行失败',
+  task_retried: '任务重试',
+  task_cancelled: '任务取消',
+  message_received: '消息接收',
+  task_scheduled: '任务调度',
+};
+
+export const CONNECTOR_AUTH_STATUSES = ['unverified', 'authorized', 'invalid'] as const;
+export type ConnectorAuthStatus = (typeof CONNECTOR_AUTH_STATUSES)[number];
+export const CONNECTOR_AUTH_STATUS_LABELS: Record<ConnectorAuthStatus, string> = {
+  unverified: '未验证',
+  authorized: '已授权',
+  invalid: '凭证无效',
+};
+
+export const TASK_RUN_STATUSES = [
+  'pending',
+  'created',
+  'notify_pending',
+  'failed',
+  'needs_review',
+  'cancelled',
+] as const;
+export type TaskRunStatus = (typeof TASK_RUN_STATUSES)[number];
+export const isTaskRunStatus = (v: string): v is TaskRunStatus =>
+  (TASK_RUN_STATUSES as readonly string[]).includes(v);
+export const TASK_RUN_STATUS_LABELS: Record<TaskRunStatus, string> = {
+  pending: '等待执行',
+  created: '待办已创建',
+  notify_pending: '待通知',
+  failed: '执行失败',
+  needs_review: '待人工处理',
+  cancelled: '已取消',
 };
 
 /* ===== 规则配置（jsonb 存储）===== */
@@ -202,6 +273,18 @@ export interface ExtractionConfig {
   objectLabel?: string;
   objectPattern: string;
   versionPattern?: string;
+  releaseRatioPattern?: string;
+}
+
+export interface AllowedSender {
+  name: string;
+  openId: string;
+}
+
+export interface DueAtConfig {
+  mode: DuePolicyMode;
+  delayMinutes?: number;
+  fixedTime?: string;
 }
 
 export interface AssigneeStrategy {
@@ -225,11 +308,18 @@ export interface NotifyTarget {
 export interface RuleConfig {
   sourceConnectorId: string | null;
   sourceGroups: string[];
+  action: RuleAction | null;
+  sourceChatId: string;
+  sourceChatName: string;
+  notifyChatId: string;
+  notifyChatName: string;
+  allowedSenders: AllowedSender[];
   trigger: RuleConditionGroup;
   exclusions: RuleConditionGroup;
   extraction: ExtractionConfig | null;
   assignee: AssigneeStrategy | null;
   timing: TimingConfig;
+  dueAt: DueAtConfig | null;
   taskTitleTemplate: string;
   taskDescTemplate: string;
   notifyTargets: NotifyTarget[];
@@ -260,14 +350,21 @@ export interface WorkspaceSettingsPayload {
   securityNote: string;
 }
 
+export interface DiscoveredChat {
+  chatId: string;
+  name: string;
+}
+
 export interface Connector {
   id: string;
   name: string;
   environment: ConnectorEnv;
   feishuAppIdMasked: string;
-  credentialRef: string;
+  secretConfigured: boolean;
+  authStatus: ConnectorAuthStatus;
   sourceGroups: string[];
   notifyGroups: string[];
+  discoveredChats: DiscoveredChat[];
   timezone: string;
   ownerSource: OwnerSource;
   scanPeriodMinutes: number;
@@ -280,7 +377,7 @@ export interface ConnectorPayload {
   name: string;
   environment: ConnectorEnv;
   feishuAppId: string;
-  credentialRef: string;
+  feishuAppSecret?: string;
   sourceGroups: string[];
   notifyGroups: string[];
   timezone: string;
@@ -293,6 +390,11 @@ export interface ConnectorCheckResult {
   passed: boolean;
   issues: string[];
   warnings: string[];
+  note: string;
+}
+
+export interface ConnectorSyncResult {
+  chats: DiscoveredChat[];
   note: string;
 }
 
@@ -372,6 +474,7 @@ export interface SimulationResult {
   exclusionReason: string;
   extractedObjectKey: string;
   extractedObjectVersion: string;
+  extractedReleaseRatio: string;
   assignees: string[];
   runAt: string;
   dueAt: string;
@@ -400,12 +503,69 @@ export interface SimulationRunRequest {
   input: SimulationInput;
 }
 
+/* ===== 任务运行 ===== */
+
+export interface TaskRun {
+  id: string;
+  ruleId: string;
+  ruleCode: string;
+  ruleName: string;
+  connectionId: string;
+  connectionName: string;
+  messageId: string;
+  status: TaskRunStatus;
+  assigneeOpenId: string;
+  assigneeName: string;
+  objectKey: string;
+  objectVersion: string;
+  releaseRatio: string;
+  taskTitle: string;
+  taskDesc: string;
+  sourceChatId: string;
+  sourceChatName: string;
+  notifyChatId: string;
+  notifyChatName: string;
+  runAt: string;
+  dueAt: string | null;
+  taskGuid: string;
+  notifyMessageId: string;
+  retryCount: number;
+  notifyAttempts: number;
+  nextRetryAt: string | null;
+  lastError: string;
+  dedupKey: string;
+  isDemo: boolean;
+  createdAt: string;
+}
+
+export interface TaskRunListQuery {
+  status?: TaskRunStatus;
+  ruleCode?: string;
+  keyword?: string;
+}
+
+export interface TaskRunStats {
+  pending: number;
+  created: number;
+  notify_pending: number;
+  failed: number;
+  needs_review: number;
+  cancelled: number;
+}
+
 /* ===== 审计 ===== */
 
 export interface AuditLogEntry {
   id: string;
   action: AuditAction;
-  entityType: 'rule' | 'connector' | 'workspace' | 'simulation' | 'integration';
+  entityType:
+    | 'rule'
+    | 'connector'
+    | 'workspace'
+    | 'simulation'
+    | 'integration'
+    | 'run'
+    | 'task_run';
   entityId: string;
   entityName: string;
   summary: string;

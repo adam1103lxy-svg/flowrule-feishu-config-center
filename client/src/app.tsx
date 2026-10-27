@@ -8,6 +8,7 @@ import ConnectorsPage from './pages/connectors';
 import RulesPage from './pages/rules';
 import RuleEditorPage from './pages/rule-editor';
 import SimulationPage from './pages/simulation';
+import RunsPage from './pages/runs';
 import IntegrationPage from './pages/integration';
 import AuditPage from './pages/audit';
 import SettingsPage from './pages/settings';
@@ -21,6 +22,7 @@ const RoutesComponent = () => {
         <Route path="rules" element={<RulesPage />} />
         <Route path="rules/new" element={<RuleEditorPage />} />
         <Route path="rules/:ruleId/edit" element={<RuleEditorPage />} />
+        <Route path="runs" element={<RunsPage />} />
         <Route path="simulation" element={<SimulationPage />} />
         <Route path="integration" element={<IntegrationPage />} />
         <Route path="audit" element={<AuditPage />} />

@@ -52,4 +52,9 @@ export class ConnectorsController {
   async check(@Req() req: Request, @Param('id') id: string) {
     return this.connectorsService.check(id, req.userContext.userId);
   }
+
+  @Post(':id/sync-chats')
+  async syncChats(@Req() req: Request, @Param('id') id: string) {
+    return this.connectorsService.syncChats(id, req.userContext.userId);
+  }
 }

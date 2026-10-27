@@ -2,9 +2,14 @@ import {
   CONDITION_TYPE_LABELS,
   DEDUP_FIELD_LABELS,
   NOTIFY_TARGET_TYPE_LABELS,
+  RULE_ACTIONS,
   TIMING_MODE_LABELS,
+  type AllowedSender,
   type AssignerMode,
+  type DueAtConfig,
+  type DuePolicyMode,
   type Rule,
+  type RuleAction,
   type RuleCondition,
   type RuleConditionGroup,
   type RuleConfig,
@@ -24,6 +29,25 @@ const asNumber = (v: unknown, fallback = 0): number =>
 
 const asStringArray = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+
+const asAllowedSenders = (v: unknown): AllowedSender[] =>
+  Array.isArray(v)
+    ? v
+        .filter((x): x is Record<string, unknown> => typeof x === 'object' && x !== null)
+        .map((x) => ({ name: asString(x.name), openId: asString(x.openId) }))
+        .filter((x) => x.name || x.openId)
+    : [];
+
+const asDueAt = (v: unknown): DueAtConfig | null => {
+  if (typeof v !== 'object' || v === null) return null;
+  const raw = v as Record<string, unknown>;
+  const mode = asString(raw.mode, 'none') as DuePolicyMode;
+  return {
+    mode,
+    delayMinutes: typeof raw.delayMinutes === 'number' ? raw.delayMinutes : undefined,
+    fixedTime: typeof raw.fixedTime === 'string' ? raw.fixedTime : undefined,
+  };
+};
 
 const asGroup = (v: unknown): RuleConditionGroup => {
   const raw = typeof v === 'object' && v !== null ? (v as Record<string, unknown>) : {};
@@ -67,10 +91,21 @@ export const normalizeRuleConfig = (raw: unknown): RuleConfig => {
       ? (src.extraction as Record<string, unknown>)
       : null;
   const notifyRaw = Array.isArray(src.notifyTargets) ? src.notifyTargets : [];
+  const actionRaw = asString(src.action);
+  const action: RuleAction | null =
+    actionRaw && (RULE_ACTIONS as readonly string[]).includes(actionRaw)
+      ? (actionRaw as RuleAction)
+      : null;
   return {
     sourceConnectorId:
       typeof src.sourceConnectorId === 'string' ? src.sourceConnectorId : null,
     sourceGroups: asStringArray(src.sourceGroups),
+    action,
+    sourceChatId: asString(src.sourceChatId),
+    sourceChatName: asString(src.sourceChatName),
+    notifyChatId: asString(src.notifyChatId),
+    notifyChatName: asString(src.notifyChatName),
+    allowedSenders: asAllowedSenders(src.allowedSenders),
     trigger: asGroup(src.trigger),
     exclusions: asGroup(src.exclusions),
     extraction: extractionRaw
@@ -83,6 +118,10 @@ export const normalizeRuleConfig = (raw: unknown): RuleConfig => {
           versionPattern:
             typeof extractionRaw.versionPattern === 'string'
               ? extractionRaw.versionPattern
+              : undefined,
+          releaseRatioPattern:
+            typeof extractionRaw.releaseRatioPattern === 'string'
+              ? extractionRaw.releaseRatioPattern
               : undefined,
         }
       : null,
@@ -105,6 +144,7 @@ export const normalizeRuleConfig = (raw: unknown): RuleConfig => {
         }
       : null,
     timing: asTiming(src.timing),
+    dueAt: asDueAt(src.dueAt),
     taskTitleTemplate: asString(src.taskTitleTemplate),
     taskDescTemplate: asString(src.taskDescTemplate),
     notifyTargets: notifyRaw
@@ -316,14 +356,38 @@ export const simulateRule = (
   const sentAt = new Date(input.sentAt);
 
   const sourceOk =
-    config.sourceGroups.length === 0 || config.sourceGroups.includes(input.sourceGroup);
+    config.sourceChatId !== ''
+      ? config.sourceChatId === input.sourceGroup ||
+        config.sourceGroups.includes(input.sourceGroup)
+      : config.sourceGroups.length === 0 ||
+        config.sourceGroups.includes(input.sourceGroup);
   trace.push({
     step: 'source',
     label: '来源群匹配',
     passed: sourceOk,
-    detail: sourceOk
-      ? `消息来自规则来源群「${input.sourceGroup}」`
-      : `消息群「${input.sourceGroup}」不在规则来源群：${config.sourceGroups.join('、') || '（未配置）'}`,
+      detail: sourceOk
+      ? `消息来自规则来源群「${config.sourceChatId || input.sourceGroup}」`
+      : `消息群「${input.sourceGroup}」不在规则来源群：${[
+        config.sourceChatId,
+        ...config.sourceGroups,
+      ]
+        .filter(Boolean)
+        .join('、') || '（未配置）'}`,
+  });
+
+  const senderAllowed =
+    config.allowedSenders.length === 0 ||
+    config.allowedSenders.some((s) => s.openId && s.openId === input.sender);
+  trace.push({
+    step: 'sender-permission',
+    label: '允许触发人',
+    passed: senderAllowed,
+    detail:
+      config.allowedSenders.length === 0
+        ? '未配置允许触发人，任意成员可触发'
+        : senderAllowed
+          ? `发送者 ${input.sender} 在允许触发人列表`
+          : `发送者 ${input.sender} 不在允许触发人列表（${config.allowedSenders.map((s) => s.name || s.openId).join('、')}）`,
   });
 
   const trigger = evaluateGroup(config.trigger, input);
@@ -364,7 +428,7 @@ export const simulateRule = (
     });
   }
 
-  const matched = sourceOk && trigger.matched && !exclusion.matched;
+  const matched = sourceOk && senderAllowed && trigger.matched && !exclusion.matched;
 
   const extraction = extractByPattern(
     config.extraction?.objectPattern ?? '',
@@ -386,9 +450,29 @@ export const simulateRule = (
       : '规则未命中，跳过提取',
   });
 
+  const ratio = extractByPattern(
+    config.extraction?.releaseRatioPattern ?? '',
+    input.messageText,
+  );
+  if (matched && (config.extraction?.releaseRatioPattern ?? '') !== '') {
+    trace.push({
+      step: 'extraction-ratio',
+      label: '发布比例提取',
+      passed: matched ? Boolean(ratio.value) : null,
+      detail: matched
+        ? ratio.value
+          ? `提取到发布比例「${ratio.value}」`
+          : `未提取到发布比例：${ratio.error}`
+        : '规则未命中，跳过提取',
+    });
+  }
+
   let assignees: string[] = [];
   if (matched && config.assignee) {
     switch (config.assignee.mode) {
+      case 'mention_first_else_sender':
+        assignees = [input.mentions.length === 1 ? input.mentions[0] : input.sender];
+        break;
       case 'mention':
         assignees = [...input.mentions];
         break;
@@ -421,7 +505,18 @@ export const simulateRule = (
 
   const timing = computeRunAt(sentAt, config.timing, timezone);
   const runAt = matched ? timing.runAt : sentAt;
-  const dueAt = new Date(runAt.getTime() + 24 * 60 * 60_000);
+  let dueAt: Date | null = null;
+  if (matched && config.dueAt && config.dueAt.mode !== 'none') {
+    if (config.dueAt.mode === 'relative_minutes') {
+      dueAt = new Date(runAt.getTime() + (config.dueAt.delayMinutes ?? 0) * 60_000);
+    } else if (config.dueAt.mode === 'fixed_next_day') {
+      dueAt = computeRunAt(
+        runAt,
+        { mode: 'fixed_next_day', fixedTime: config.dueAt.fixedTime ?? '09:00' },
+        timezone,
+      ).runAt;
+    }
+  }
   if (matched) {
     trace.push({
       step: 'timing',
@@ -434,6 +529,8 @@ export const simulateRule = (
   const dedupValues: Record<string, string> = {
     message_id: input.messageId,
     object_key: objectKey,
+    object_version: version.value,
+    release_ratio: ratio.value,
     rule_id: rule.code,
     source_group: input.sourceGroup,
     sender: input.sender,
@@ -471,8 +568,10 @@ export const simulateRule = (
   }
 
   const cancelHit =
-    matched && config.cancelWords.some((w) => w && input.messageText.includes(w));
-  if (matched && config.cancelWords.length > 0) {
+    sourceOk &&
+    senderAllowed &&
+    config.cancelWords.some((w) => w && input.messageText.includes(w));
+  if (sourceOk && config.cancelWords.length > 0) {
     trace.push({
       step: 'cancel',
       label: '取消词检查',
@@ -486,6 +585,7 @@ export const simulateRule = (
   const vars = {
     object_key: objectKey,
     object_version: version.value,
+    release_ratio: ratio.value,
     sender: input.sender,
     source_group: input.sourceGroup,
     rule_name: rule.name,
@@ -500,9 +600,10 @@ export const simulateRule = (
       : '',
     extractedObjectKey: objectKey,
     extractedObjectVersion: matched ? version.value : '',
+    extractedReleaseRatio: matched ? ratio.value : '',
     assignees,
     runAt: matched ? runAt.toISOString() : '',
-    dueAt: matched ? dueAt.toISOString() : '',
+    dueAt: matched && dueAt ? dueAt.toISOString() : '',
     dedupKey,
     notifyTargets: notifyLabels,
     taskTitle: matched ? renderTemplate(config.taskTitleTemplate, vars) : '',
@@ -517,12 +618,20 @@ export const simulateRule = (
 export const validateRuleConfig = (config: RuleConfig): ValidationResult => {
   const issues: string[] = [];
   if (!config.sourceConnectorId) issues.push('缺少来源连接器');
-  if (config.sourceGroups.length === 0) issues.push('缺少来源群');
+  if (!config.action) issues.push('缺少执行动作（需配置「创建飞书待办」）');
+  if (!config.sourceChatId.trim()) issues.push('缺少来源消息群的真实 chat_id');
+  if (!config.notifyChatId.trim()) issues.push('缺少创建结果通知群的真实 chat_id');
   if (config.trigger.conditions.length === 0) issues.push('缺少触发条件');
   if (!config.assignee) issues.push('缺少负责人策略');
   if (config.notifyTargets.length === 0) issues.push('缺少通知目标');
+  if (config.allowedSenders.length > 0 && config.allowedSenders.some((s) => !s.openId.trim()))
+    issues.push('允许触发人未配置飞书 open_id，无法匹配真实发送者');
   if (config.dedupFields.length === 0) issues.push('缺少去重键字段');
   if (!config.taskTitleTemplate) issues.push('缺少任务标题模板');
+  if (config.dueAt?.mode === 'relative_minutes' && !(config.dueAt.delayMinutes && config.dueAt.delayMinutes > 0))
+    issues.push('截止时间相对延迟必须大于 0 分钟');
+  if (config.dueAt?.mode === 'fixed_next_day' && !config.dueAt.fixedTime)
+    issues.push('截止时间为固定次日时间时必须配置时间');
 
   for (const cond of [...config.trigger.conditions, ...config.exclusions.conditions]) {
     if (cond.type === 'regex' && cond.pattern) {
@@ -538,6 +647,13 @@ export const validateRuleConfig = (config: RuleConfig): ValidationResult => {
       new RegExp(config.extraction.objectPattern);
     } catch {
       issues.push(`业务对象提取正则无效：${config.extraction.objectPattern}`);
+    }
+  }
+  if (config.extraction?.releaseRatioPattern) {
+    try {
+      new RegExp(config.extraction.releaseRatioPattern);
+    } catch {
+      issues.push(`发布比例提取正则无效：${config.extraction.releaseRatioPattern}`);
     }
   }
   if (config.timing.mode === 'relative_delay' && !(config.timing.delayMinutes && config.timing.delayMinutes > 0)) {

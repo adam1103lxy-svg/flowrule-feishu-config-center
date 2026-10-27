@@ -291,9 +291,9 @@ const SimulationPage = () => {
 
       <Alert>
         <Info />
-        <AlertTitle>模拟不调用飞书、不创建任务</AlertTitle>
+        <AlertTitle>模拟仅用于验证规则逻辑</AlertTitle>
         <AlertDescription>
-          模拟仅在本地评估规则配置（触发、排除、提取、指派、时机、去重、通知），不会向飞书发送任何请求，也不会创建任务。
+          模拟不调用飞书、不创建真实待办、不发送通知；结果只保存为模拟记录，可在下方历史中查看。
         </AlertDescription>
       </Alert>
 
@@ -326,6 +326,10 @@ const SimulationPage = () => {
                           {...field}
                         />
                       </FormControl>
+                      <p className="text-xs text-muted-foreground">
+                        如需验证发布比例提取，可在消息文本中写「发布比例
+                        100%」，由规则的发布比例正则提取。
+                      </p>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -383,6 +387,12 @@ const SimulationPage = () => {
                       <FormControl>
                         <MentionsField value={field.value} onChange={field.onChange} />
                       </FormControl>
+                      {selectedRule?.config.assignee?.mode ===
+                      'mention_first_else_sender' ? (
+                        <p className="text-xs text-muted-foreground">
+                          当前规则负责人策略：@一人优先，否则消息发送者。
+                        </p>
+                      ) : null}
                       <FormMessage />
                     </FormItem>
                   )}

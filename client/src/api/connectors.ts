@@ -4,6 +4,7 @@ import type {
   Connector,
   ConnectorCheckResult,
   ConnectorPayload,
+  DiscoveredChat,
 } from '@shared/api.interface';
 
 export const CONNECTORS_QUERY_KEY = ['connectors'] as const;
@@ -68,8 +69,29 @@ export const useDeleteConnector = () => {
   });
 };
 
-export const useCheckConnector = () =>
-  useMutation({
+export const useCheckConnector = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
     mutationFn: checkConnector,
     retry: false,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: CONNECTORS_QUERY_KEY });
+    },
   });
+};
+
+export const syncConnectorChats = (id: string): Promise<DiscoveredChat[]> =>
+  axiosForBackend
+    .post(`/api/connectors/${id}/sync-chats`)
+    .then((res) => res.data);
+
+export const useSyncConnectorChats = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: syncConnectorChats,
+    retry: false,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: CONNECTORS_QUERY_KEY });
+    },
+  });
+};

@@ -1,4 +1,5 @@
 import type { UseFormReturn } from 'react-hook-form';
+import { ListChecks } from 'lucide-react';
 import {
   FormControl,
   FormDescription,
@@ -16,19 +17,23 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@client/src/components/ui/select';
-import TagsInput from '../components/tags-input';
 import SectionCard from '../components/section-card';
+import ChatPicker from '../components/chat-picker';
 import type { RuleFormValues } from '../form-schema';
-import { RULE_TYPE_LABELS, RULE_TYPES } from '@shared/api.interface';
+import {
+  CONNECTOR_AUTH_STATUS_LABELS,
+  RULE_TYPE_LABELS,
+  RULE_TYPES,
+  type Connector,
+} from '@shared/api.interface';
 
 export type RuleForm = UseFormReturn<RuleFormValues>;
 
-interface SectionProps {
+interface BasicSectionProps {
   form: RuleForm;
-  connectorOptions: { id: string; name: string }[];
 }
 
-export const BasicSection = ({ form }: SectionProps) => (
+export const BasicSection = ({ form }: BasicSectionProps) => (
   <SectionCard
     id="section-basic"
     title="基本信息"
@@ -114,63 +119,93 @@ export const BasicSection = ({ form }: SectionProps) => (
   </SectionCard>
 );
 
-export const SourceSection = ({ form, connectorOptions }: SectionProps) => (
-  <SectionCard
-    id="section-source"
-    title="来源"
-    description="消息来自哪个连接器与哪些飞书群；留空则发布校验会阻断。"
-  >
-    <FormField
-      control={form.control}
-      name="sourceConnectorId"
-      render={({ field }) => (
-        <FormItem>
-          <FormLabel>来源连接器</FormLabel>
-          <Select
-            onValueChange={(v: string) => field.onChange(v === 'none' ? '' : v)}
-            value={field.value || 'none'}
-          >
+interface SourceSectionProps {
+  form: RuleForm;
+  connectors: Connector[];
+}
+
+export const SourceSection = ({ form, connectors }: SourceSectionProps) => {
+  const connectorId = form.watch('sourceConnectorId');
+  const chats =
+    connectors.find((c: Connector) => c.id === connectorId)
+      ?.discoveredChats ?? [];
+  const chatName = form.watch('sourceChatName');
+
+  return (
+    <SectionCard
+      id="section-source"
+      title="来源与执行动作"
+      description="消息来自哪个连接器与哪个来源消息群，以及规则命中后执行的动作。"
+    >
+      <FormField
+        control={form.control}
+        name="sourceConnectorId"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel>来源连接器</FormLabel>
+            <Select
+              onValueChange={(v: string) => field.onChange(v === 'none' ? '' : v)}
+              value={field.value || 'none'}
+            >
+              <FormControl>
+                <SelectTrigger>
+                  <SelectValue placeholder="请选择连接器" />
+                </SelectTrigger>
+              </FormControl>
+              <SelectContent>
+                <SelectItem value="none">未选择</SelectItem>
+                {connectors.map((c: Connector) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    {c.name}（{CONNECTOR_AUTH_STATUS_LABELS[c.authStatus]}）
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <FormDescription>
+              连接器提供飞书应用凭据与已发现群列表，发布前必须选择已授权的连接器。
+            </FormDescription>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+      <FormField
+        control={form.control}
+        name="sourceChatId"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel>来源消息群</FormLabel>
             <FormControl>
-              <SelectTrigger>
-                <SelectValue placeholder="请选择连接器" />
-              </SelectTrigger>
+              <ChatPicker
+                chats={chats}
+                value={field.value}
+                onChange={(chatId: string, name: string) => {
+                  field.onChange(chatId);
+                  form.setValue('sourceChatName', name);
+                }}
+                selectPlaceholder="请选择来源消息群"
+                manualPlaceholder="手动输入群 ID，形如 oc_xxx"
+              />
             </FormControl>
-            <SelectContent>
-              <SelectItem value="none">未选择</SelectItem>
-              {connectorOptions.map((c) => (
-                <SelectItem key={c.id} value={c.id}>
-                  {c.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <FormDescription>
-            连接器提供飞书应用凭据与群列表，发布前必须选择。
-          </FormDescription>
-          <FormMessage />
-        </FormItem>
-      )}
-    />
-    <FormField
-      control={form.control}
-      name="sourceGroups"
-      render={({ field }) => (
-        <FormItem>
-          <FormLabel>来源群</FormLabel>
-          <FormControl>
-            <TagsInput
-              value={field.value}
-              onChange={field.onChange}
-              ariaLabel="来源群，输入后回车添加"
-              placeholder="输入群名称或群 ID，回车添加"
-            />
-          </FormControl>
-          <FormDescription>
-            多个来源群任一群命中即算该规则的来源；留空表示连接器全部来源群。
-          </FormDescription>
-          <FormMessage />
-        </FormItem>
-      )}
-    />
-  </SectionCard>
-);
+            <FormDescription>
+              优先从所选连接器已发现的群中选择真实群 ID；选择后自动记录群名称，也可手动输入 oc_ 开头的群 ID 兑底。
+            </FormDescription>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+      {chatName ? (
+        <p className="text-sm text-muted-foreground">已选群：{chatName}</p>
+      ) : null}
+      <div className="space-y-1">
+        <span className="text-sm font-medium leading-none">执行动作</span>
+        <div className="flex items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm font-medium text-foreground">
+          <ListChecks className="size-4 text-primary" />
+          创建飞书待办
+        </div>
+        <p className="text-xs text-muted-foreground">
+          规则命中并到达执行时机后，自动创建一条飞书待办发送给负责人。
+        </p>
+      </div>
+    </SectionCard>
+  );
+};

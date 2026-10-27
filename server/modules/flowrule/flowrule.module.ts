@@ -14,11 +14,19 @@ import { IntegrationController } from './integration.controller';
 import { IntegrationOpenApiController } from './integration.openapi.controller';
 import { IntegrationService } from './integration.service';
 import { SeedService } from './seed.service';
+import { RunsController } from './runs.controller';
+import { TaskRunService } from './task-run.service';
+import { FeishuClientService } from './feishu-client.service';
+import { FeishuEventsService } from './feishu-events.service';
+import { DispatcherService } from './dispatcher.service';
+import { FlowRuleAutomationTasksService } from './flowrule.automation';
 
 @Module({
+  imports: [],
   controllers: [
     ConnectorsController,
     RulesController,
+    RunsController,
     SimulationController,
     AuditController,
     WorkspaceController,
@@ -34,6 +42,11 @@ import { SeedService } from './seed.service';
     WorkspaceService,
     IntegrationService,
     SeedService,
+    FeishuClientService,
+    FeishuEventsService,
+    DispatcherService,
+    TaskRunService,
+    FlowRuleAutomationTasksService,
   ],
 })
 export class FlowRuleModule {}

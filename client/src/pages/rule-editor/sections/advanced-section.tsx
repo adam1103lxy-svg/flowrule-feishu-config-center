@@ -111,10 +111,30 @@ export const ExtractionSection = ({ form }: SectionProps) => {
               </FormItem>
             )}
           />
+          <FormField
+            control={form.control}
+            name="extraction.releaseRatioPattern"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>发布比例提取正则</FormLabel>
+                <FormControl>
+                  <Input
+                    placeholder={'如：发布比例[:：]?\\s*(?<ratio>\\d+%?)'}
+                    {...field}
+                  />
+                </FormControl>
+                <FormDescription>
+                  需包含捕获组，提取结果填充 {'{{release_ratio}}'} 变量，可选。
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
         </>
       ) : (
         <p className="text-sm text-muted-foreground">
-          未启用提取，模板变量 {'{{object_key}}'} / {'{{object_version}}'} 将为空。
+          未启用提取，模板变量 {'{{object_key}}'} / {'{{object_version}}'} /
+          {'{{release_ratio}}'} 将为空。
         </p>
       )}
     </SectionCard>
@@ -123,6 +143,10 @@ export const ExtractionSection = ({ form }: SectionProps) => {
 
 const ASSIGNEE_MODE_OPTIONS = [
   { value: 'none', label: '不指派' },
+  {
+    value: 'mention_first_else_sender',
+    label: ASSIGNER_MODE_LABELS.mention_first_else_sender,
+  },
   { value: 'mention', label: ASSIGNER_MODE_LABELS.mention },
   { value: 'sender', label: ASSIGNER_MODE_LABELS.sender },
   { value: 'static', label: ASSIGNER_MODE_LABELS.static },
@@ -167,14 +191,19 @@ export const AssigneeSection = ({ form }: SectionProps) => {
         )}
       />
 
+      {mode === 'mention_first_else_sender' ? (
+        <p className="text-sm text-muted-foreground">
+          推荐：消息中明确 @ 一人时，待办指派给被@人；未明确 @ 人时，指派给消息发送者；均无法解析时使用兜底人员。
+        </p>
+      ) : null}
       {mode === 'mention' ? (
         <p className="text-sm text-muted-foreground">
-          将任务指派给消息中被 @ 的成员；无被@人时使用兜底人员。
+          将待办指派给消息中被 @ 的成员；无被@人时使用兜底人员。
         </p>
       ) : null}
       {mode === 'sender' ? (
         <p className="text-sm text-muted-foreground">
-          将任务指派给消息发送者；无法解析时使用兜底人员。
+          将待办指派给消息发送者；无法解析时使用兜底人员。
         </p>
       ) : null}
 
@@ -338,7 +367,9 @@ export const TimingSection = ({ form }: SectionProps) => {
                   }
                 />
               </FormControl>
-              <FormDescription>命中后延迟 N 分钟创建任务。</FormDescription>
+              <FormDescription>
+                相对延迟按消息实际命中时刻起算，如实际发布后 1440 分钟（即次日同一时刻）创建待办。
+              </FormDescription>
               <FormMessage />
             </FormItem>
           )}
@@ -361,7 +392,7 @@ export const TimingSection = ({ form }: SectionProps) => {
         />
       ) : null}
       {mode === 'immediate' ? (
-        <p className="text-sm text-muted-foreground">命中后立即创建任务。</p>
+        <p className="text-sm text-muted-foreground">命中后立即创建待办。</p>
       ) : null}
     </SectionCard>
   );

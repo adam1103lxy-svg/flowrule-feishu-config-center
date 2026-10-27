@@ -7,6 +7,7 @@ import {
   AlertCircle,
   Ban,
   Bell,
+  CalendarClock,
   CheckCircle2,
   Clock,
   FileText,
@@ -18,6 +19,7 @@ import {
   Send,
   ShieldAlert,
   UserCog,
+  Users,
   XCircle,
   Zap,
 } from 'lucide-react';
@@ -25,6 +27,7 @@ import type { LucideIcon } from 'lucide-react';
 
 import { RuleStatusBadge } from '@client/src/components/shared/status-badge';
 import { getApiErrorMessage } from '@client/src/utils/api-error';
+import { Alert, AlertDescription, AlertTitle } from '@client/src/components/ui/alert';
 import { Button } from '@client/src/components/ui/button';
 import {
   Dialog,
@@ -39,12 +42,12 @@ import {
 } from '@client/src/components/ui/form';
 import { Textarea } from '@client/src/components/ui/textarea';
 import {
-  useConnectorOptions,
   useCreateRule,
   usePublishRule,
   useUpdateRule,
   useValidateRuleConfig,
 } from '@client/src/api/rules';
+import { useConnectors } from '@client/src/api/connectors';
 import type {
   Rule,
   RuleConfig,
@@ -70,9 +73,14 @@ import {
   CancelSection,
   DedupSection,
   FailureSection,
-  NotifySection,
   TemplatesSection,
 } from './sections/output-section';
+import {
+  AllowedSendersSection,
+  DueAtSection,
+  NotifyChatSection,
+} from './sections/task-section';
+import FlowSteps from './components/flow-steps';
 import { cn } from '@client/src/lib/utils';
 
 interface SectionNavItem {
@@ -83,14 +91,16 @@ interface SectionNavItem {
 
 const SECTION_NAV: SectionNavItem[] = [
   { id: 'section-basic', label: '基本信息', icon: Info },
-  { id: 'section-source', label: '来源', icon: Plug },
+  { id: 'section-source', label: '来源与执行动作', icon: Plug },
+  { id: 'section-senders', label: '允许触发人', icon: Users },
   { id: 'section-trigger', label: '触发条件', icon: Zap },
   { id: 'section-exclusions', label: '排除条件', icon: Ban },
   { id: 'section-extraction', label: '业务对象提取', icon: Package },
-  { id: 'section-assignee', label: '负责人策略', icon: UserCog },
   { id: 'section-timing', label: '执行时机', icon: Clock },
-  { id: 'section-templates', label: '任务模板', icon: FileText },
-  { id: 'section-notify', label: '通知目标', icon: Bell },
+  { id: 'section-due-at', label: '截止时间策略', icon: CalendarClock },
+  { id: 'section-templates', label: '待办模板', icon: FileText },
+  { id: 'section-assignee', label: '负责人策略', icon: UserCog },
+  { id: 'section-notify-chat', label: '结果通知群', icon: Bell },
   { id: 'section-dedup', label: '去重键', icon: Fingerprint },
   { id: 'section-cancel', label: '取消', icon: XCircle },
   { id: 'section-failure', label: '失败策略', icon: ShieldAlert },
@@ -121,13 +131,12 @@ const RuleForm = ({ ruleId, rule }: RuleFormProps) => {
 
   const [activeSection, setActiveSection] = useState('section-basic');
   const [validation, setValidation] = useState<ValidationResult | null>(null);
-  const [validationOpen, setValidationOpen] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
   const [publishBody, setPublishBody] = useState<RuleSaveBody | null>(null);
   const [changelog, setChangelog] = useState('');
   const [publishError, setPublishError] = useState<string | null>(null);
 
-  const { data: connectorOptions } = useConnectorOptions();
+  const { data: connectors } = useConnectors();
   const createRule = useCreateRule();
   const updateRule = useUpdateRule(ruleId ?? '');
   const validateRule = useValidateRuleConfig();
@@ -167,18 +176,26 @@ const RuleForm = ({ ruleId, rule }: RuleFormProps) => {
       if (body.config.dedupFields.length === 0) {
         toast.warning('未选择去重键字段，发布前需要补充');
       }
+      if (isEdit && ruleId) {
+        /* 保存前先提交校验，阻断项展示在表单顶部，但不阻塞草稿保存 */
+        try {
+          const result = await validateRule.mutateAsync({
+            id: ruleId,
+            config: body.config,
+          });
+          setValidation(result);
+        } catch {
+          /* 校验接口异常不阻塞保存 */
+        }
+      }
       try {
         if (isEdit && ruleId) {
           await updateRule.mutateAsync(body);
-          toast.success('草稿已保存');
         } else {
-          const created = await createRule.mutateAsync({
-            ...body,
-            status: 'draft',
-          });
-          toast.success('草稿已保存');
-          navigate(`/rules/${created.id}/edit`);
+          await createRule.mutateAsync({ ...body, status: 'draft' });
         }
+        toast.success('草稿已保存');
+        navigate('/rules');
       } catch (error: unknown) {
         toast.error(getApiErrorMessage(error, '保存失败，请稍后重试'));
       }
@@ -194,7 +211,6 @@ const RuleForm = ({ ruleId, rule }: RuleFormProps) => {
         {
           onSuccess: (result: ValidationResult) => {
             setValidation(result);
-            setValidationOpen(true);
           },
           onError: (error: unknown) => {
             toast.error(getApiErrorMessage(error, '校验请求失败，请稍后重试'));
@@ -239,6 +255,8 @@ const RuleForm = ({ ruleId, rule }: RuleFormProps) => {
 
   return (
     <div className="space-y-6">
+      <FlowSteps />
+
       <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-background p-4">
         {rule ? (
           <RuleStatusBadge status={rule.status as RuleStatus} />
@@ -290,6 +308,35 @@ const RuleForm = ({ ruleId, rule }: RuleFormProps) => {
         </div>
       </div>
 
+      {validation ? (
+        validation.passed ? (
+          <Alert>
+            <CheckCircle2 className="size-4" />
+            <AlertTitle>提交校验通过</AlertTitle>
+            <AlertDescription>
+              当前配置满足发布要求，可以发布新版本。
+            </AlertDescription>
+          </Alert>
+        ) : (
+          <Alert variant="destructive">
+            <AlertCircle className="size-4" />
+            <AlertTitle>
+              提交校验发现 {validation.issues.length} 个阻断项
+            </AlertTitle>
+            <AlertDescription>
+              <ul className="list-disc space-y-1 pl-4">
+                {validation.issues.map((issue: string) => (
+                  <li key={issue} className="break-words">
+                    {issue}
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-1">阻断项不影响草稿保存，修复后才能发布。</p>
+            </AlertDescription>
+          </Alert>
+        )
+      ) : null}
+
       <div className="grid gap-6 lg:grid-cols-[190px_minmax(0,1fr)]">
         <nav
           aria-label="编辑器分区导航"
@@ -328,15 +375,17 @@ const RuleForm = ({ ruleId, rule }: RuleFormProps) => {
             }}
             className="space-y-6"
           >
-            <BasicSection form={form} connectorOptions={connectorOptions ?? []} />
-            <SourceSection form={form} connectorOptions={connectorOptions ?? []} />
+            <BasicSection form={form} />
+            <SourceSection form={form} connectors={connectors ?? []} />
+            <AllowedSendersSection form={form} />
             <ConditionGroupSection form={form} fieldName="trigger" />
             <ConditionGroupSection form={form} fieldName="exclusions" />
             <ExtractionSection form={form} />
-            <AssigneeSection form={form} />
             <TimingSection form={form} />
+            <DueAtSection form={form} />
             <TemplatesSection form={form} />
-            <NotifySection form={form} />
+            <AssigneeSection form={form} />
+            <NotifyChatSection form={form} connectors={connectors ?? []} />
             <DedupSection form={form} />
             <CancelSection form={form} />
             <FailureSection form={form} />
@@ -354,43 +403,12 @@ const RuleForm = ({ ruleId, rule }: RuleFormProps) => {
         </Form>
       </div>
 
-      <Dialog open={validationOpen} onOpenChange={setValidationOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>提交校验结果</DialogTitle>
-            <DialogDescription>
-              {validation?.passed
-                ? '校验通过，可以发布新版本。'
-                : '存在以下问题，需修复后才能发布：'}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="max-h-[50vh] space-y-2 overflow-y-auto">
-            {validation?.passed ? (
-              <div className="flex items-center gap-2 rounded-md border border-success/30 bg-success/10 p-3 text-sm text-success">
-                <CheckCircle2 className="size-4 shrink-0" />
-                全部校验项通过。
-              </div>
-            ) : (
-              (validation?.issues ?? []).map((issue: string) => (
-                <div
-                  key={issue}
-                  className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive"
-                >
-                  <AlertCircle className="mt-0.5 size-4 shrink-0" />
-                  <span className="break-words">{issue}</span>
-                </div>
-              ))
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
-
       <Dialog open={publishOpen} onOpenChange={setPublishOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>发布新版本</DialogTitle>
             <DialogDescription>
-              发布前会先保存当前编辑内容，再执行发布校验；缺少连接器、负责人、通知目标或去重键会被阻断。
+              发布前会先保存当前编辑内容，再执行发布校验；缺少连接器、来源群、执行动作、负责人、通知群或去重键会被阻断。
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">

@@ -19,6 +19,7 @@ import {
   RULE_STATUSES,
   RULE_TYPES,
   SENDER_ROLES,
+  TASK_RUN_STATUSES,
 } from '@shared/api.interface';
 
 export class ConnectorPayloadDto {
@@ -31,8 +32,8 @@ export class ConnectorPayloadDto {
   @IsString() @MaxLength(64)
   feishuAppId!: string;
 
-  @IsString() @MaxLength(255)
-  credentialRef!: string;
+  @IsOptional() @IsString() @MaxLength(255)
+  feishuAppSecret?: string;
 
   @IsArray() @IsString({ each: true })
   sourceGroups!: string[];
@@ -193,12 +194,38 @@ export class AuditListQueryDto {
     | 'connector_updated'
     | 'connector_deleted'
     | 'connector_checked'
-    | 'settings_updated';
+    | 'connector_authorized'
+    | 'connector_synced'
+    | 'settings_updated'
+    | 'task_created'
+    | 'task_notified'
+    | 'task_failed'
+    | 'task_retried'
+    | 'task_cancelled'
+    | 'message_received'
+    | 'task_scheduled';
 
   @IsOptional() @Transform(({ obj, key, value }) => (obj[key] === '' ? undefined : value)) @IsString()
   entityType?: string;
 
   @IsOptional() @Transform(({ obj, key, value }) => (obj[key] === '' ? undefined : value)) @IsString()
+  keyword?: string;
+}
+
+export class TaskRunListQueryDto {
+  @IsOptional()
+  @Transform(({ obj, key, value }) => (obj[key] === '' ? undefined : value))
+  @IsIn(TASK_RUN_STATUSES)
+  status?: 'pending' | 'created' | 'notify_pending' | 'failed' | 'needs_review' | 'cancelled';
+
+  @IsOptional()
+  @Transform(({ obj, key, value }) => (obj[key] === '' ? undefined : value))
+  @IsString()
+  ruleCode?: string;
+
+  @IsOptional()
+  @Transform(({ obj, key, value }) => (obj[key] === '' ? undefined : value))
+  @IsString()
   keyword?: string;
 }
 

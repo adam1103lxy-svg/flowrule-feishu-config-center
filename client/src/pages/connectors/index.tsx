@@ -5,7 +5,7 @@ import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { toast } from 'sonner';
 import {
-  Info,
+  ListChecks,
   LoaderCircle,
   Pencil,
   Plus,
@@ -27,6 +27,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@client/src/components/ui/dialog';
+import {
+  Drawer,
+  DrawerContent,
+  DrawerDescription,
+  DrawerHeader,
+  DrawerTitle,
+} from '@client/src/components/ui/drawer';
 import {
   Empty,
   EmptyDescription,
@@ -61,6 +68,7 @@ import {
   TableRow,
 } from '@client/src/components/ui/table';
 import {
+  CONNECTOR_AUTH_STATUS_LABELS,
   CONNECTOR_ENV_LABELS,
   CONNECTOR_ENVS,
   CONNECTOR_STATUSES,
@@ -68,19 +76,21 @@ import {
   OWNER_SOURCES,
   OWNER_SOURCE_LABELS,
   type Connector,
+  type ConnectorAuthStatus,
   type ConnectorCheckResult,
   type ConnectorEnv,
   type ConnectorPayload,
+  type DiscoveredChat,
 } from '@shared/api.interface';
 import {
   useCheckConnector,
   useConnectors,
   useCreateConnector,
   useDeleteConnector,
+  useSyncConnectorChats,
   useUpdateConnector,
 } from '@client/src/api/connectors';
 import { getApiErrorMessage } from '@client/src/utils/api-error';
-import { formatDateTime } from '@client/src/utils/format';
 import { cn } from '@client/src/lib/utils';
 
 /* ===== 本地常量与样式 ===== */
@@ -102,13 +112,31 @@ const ENV_STYLES: Record<ConnectorEnv, string> = {
   test: 'bg-muted text-muted-foreground border-border',
 };
 
+const AUTH_STATUS_STYLES: Record<ConnectorAuthStatus, string> = {
+  authorized: 'bg-success/10 text-success border-success/30',
+  unverified: 'bg-warning/10 text-warning border-warning/30',
+  invalid: 'bg-destructive/10 text-destructive border-destructive/30',
+};
+
+const AuthStatusBadge = ({ status }: { status: ConnectorAuthStatus }) => (
+  <Badge
+    variant="outline"
+    className={cn('whitespace-nowrap', AUTH_STATUS_STYLES[status])}
+  >
+    {CONNECTOR_AUTH_STATUS_LABELS[status]}
+  </Badge>
+);
+
 /* ===== 表单 ===== */
 
 const connectorFormSchema = z.object({
   name: z.string().min(1, '名称不能为空').max(100, '名称不能超过 100 字'),
   environment: z.enum(CONNECTOR_ENVS),
-  feishuAppId: z.string().min(1, '飞书 App ID 不能为空').max(64, '不能超过 64 字'),
-  credentialRef: z.string().max(255, '凭证引用不能超过 255 字'),
+  feishuAppId: z
+    .string()
+    .min(1, '飞书 App ID 不能为空')
+    .max(64, '不能超过 64 字'),
+  feishuAppSecret: z.string().max(255, 'App Secret 不能超过 255 字'),
   sourceGroups: z.array(z.string()),
   notifyGroups: z.array(z.string()),
   timezone: z.string().min(1, '请选择时区'),
@@ -129,7 +157,7 @@ const DEFAULT_CONNECTOR_FORM: ConnectorFormValues = {
   name: '',
   environment: 'prod',
   feishuAppId: '',
-  credentialRef: '',
+  feishuAppSecret: '',
   sourceGroups: [],
   notifyGroups: [],
   timezone: 'Asia/Shanghai',
@@ -205,8 +233,8 @@ const ConnectorFormDialog = ({ editing, onClose }: ConnectorFormDialogProps) => 
       ? {
           name: editing.name,
           environment: editing.environment,
-          feishuAppId: editing.feishuAppIdMasked,
-          credentialRef: editing.credentialRef,
+          feishuAppId: '',
+          feishuAppSecret: '',
           sourceGroups: [...editing.sourceGroups],
           notifyGroups: [...editing.notifyGroups],
           timezone: editing.timezone,
@@ -222,11 +250,19 @@ const ConnectorFormDialog = ({ editing, onClose }: ConnectorFormDialogProps) => 
     : [...TIMEZONES];
 
   const onSubmit = form.handleSubmit(async (data: ConnectorFormValues) => {
+    const secret = data.feishuAppSecret.trim();
+    if (!editing && secret === '') {
+      form.setError('feishuAppSecret', {
+        type: 'required',
+        message: '新建连接器必须填写 App Secret',
+      });
+      return;
+    }
     const payload: ConnectorPayload = {
       name: data.name.trim(),
       environment: data.environment,
       feishuAppId: data.feishuAppId.trim(),
-      credentialRef: data.credentialRef.trim(),
+      ...(secret !== '' ? { feishuAppSecret: secret } : {}),
       sourceGroups: data.sourceGroups,
       notifyGroups: data.notifyGroups,
       timezone: data.timezone,
@@ -259,7 +295,7 @@ const ConnectorFormDialog = ({ editing, onClose }: ConnectorFormDialogProps) => 
         <DialogHeader>
           <DialogTitle>{editing ? '编辑连接器' : '新增连接器'}</DialogTitle>
           <DialogDescription>
-            本平台不保存真实 Secret/Token，仅记录非敏感凭证引用（credentialRef）；真实凭据由接入方运行时的密钥体系管理。
+            App Secret 仅在服务端加密存储，界面与接口不再回显；建议在开放平台为应用开通群消息订阅与待办权限。
           </DialogDescription>
         </DialogHeader>
         <Form {...form}>
@@ -321,9 +357,35 @@ const ConnectorFormDialog = ({ editing, onClose }: ConnectorFormDialogProps) => 
                       </FormControl>
                       {editing ? (
                         <FormDescription>
-                          当前仅显示掩码，输入新值将覆盖原 App ID。
+                          接口不回显 App ID，请重新填写完整 App ID。
                         </FormDescription>
                       ) : null}
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="feishuAppSecret"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>
+                        App Secret{' '}
+                        {editing ? null : (
+                          <span aria-hidden="true" className="text-destructive">*</span>
+                        )}
+                      </FormLabel>
+                      <FormControl>
+                        <Input
+                          type="password"
+                          autoComplete="new-password"
+                          placeholder={editing ? '留空则保持不变' : '请输入飞书应用 App Secret'}
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        仅在服务端加密存储，保存后不再回显。
+                      </FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -350,26 +412,6 @@ const ConnectorFormDialog = ({ editing, onClose }: ConnectorFormDialogProps) => 
                           ))}
                         </SelectContent>
                       </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="credentialRef"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>凭证引用（credentialRef）</FormLabel>
-                      <FormControl>
-                        <Input
-                          placeholder="如：secret-manager://team/feishu-prod"
-                          {...field}
-                        />
-                      </FormControl>
-                      <FormDescription>
-                        非敏感引用，指向接入方密钥体系中的凭据；请勿在此填写真实
-                        Secret/Token。
-                      </FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -496,98 +538,6 @@ const ConnectorFormDialog = ({ editing, onClose }: ConnectorFormDialogProps) => 
   );
 };
 
-/* ===== 配置检查结果弹窗 ===== */
-
-interface CheckResultDialogProps {
-  target: Connector | null;
-  result: ConnectorCheckResult | undefined;
-  isPending: boolean;
-  isError: boolean;
-  error: unknown;
-  onRetry: () => void;
-  onOpenChange: (open: boolean) => void;
-}
-
-const CheckResultDialog = ({
-  target,
-  result,
-  isPending,
-  isError,
-  error,
-  onRetry,
-  onOpenChange,
-}: CheckResultDialogProps) => (
-  <Dialog open={target !== null} onOpenChange={onOpenChange}>
-    <DialogContent className="sm:max-w-lg">
-      <DialogHeader>
-        <DialogTitle>配置检查：{target?.name}</DialogTitle>
-        <DialogDescription>
-          配置完整性检查，不实际连接飞书（本平台不接触真实凭据）。
-        </DialogDescription>
-      </DialogHeader>
-      <div className="space-y-4">
-        {isPending ? (
-          <div className="text-muted-foreground flex items-center gap-2 text-sm">
-            <LoaderCircle className="size-4 animate-spin" />
-            正在检查配置完整性…
-          </div>
-        ) : null}
-        {isError ? (
-          <Alert variant="destructive">
-            <TriangleAlert />
-            <AlertTitle>配置检查失败</AlertTitle>
-            <AlertDescription>
-              <p>{getApiErrorMessage(error, '配置检查请求失败，请稍后重试')}</p>
-              <Button variant="outline" size="sm" onClick={onRetry}>
-                重试
-              </Button>
-            </AlertDescription>
-          </Alert>
-        ) : null}
-        {result && !isPending && !isError ? (
-          <>
-            <Alert variant={result.passed ? 'success' : 'destructive'}>
-              {result.passed ? <ShieldCheck /> : <TriangleAlert />}
-              <AlertTitle>
-                {result.passed ? '配置完整性检查通过' : '配置存在阻断项'}
-              </AlertTitle>
-              <AlertDescription>
-                <p>{result.note}</p>
-              </AlertDescription>
-            </Alert>
-            {result.issues.length > 0 ? (
-              <div>
-                <p className="text-destructive mb-1 text-sm font-medium">阻断项</p>
-                <ul className="text-destructive list-disc space-y-1 pl-5 text-sm">
-                  {result.issues.map((issue: string) => (
-                    <li key={issue}>{issue}</li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-            {result.warnings.length > 0 ? (
-              <div>
-                <p className="text-warning mb-1 text-sm font-medium">提醒</p>
-                <ul className="text-muted-foreground list-disc space-y-1 pl-5 text-sm">
-                  {result.warnings.map((warning: string) => (
-                    <li key={warning}>{warning}</li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-            {result.issues.length === 0 && result.warnings.length === 0 ? (
-              <div className="text-muted-foreground flex items-center gap-2 text-sm">
-                <Info className="size-4" />
-                未发现配置问题。
-              </div>
-            ) : null}
-          </>
-        ) : null}
-      </div>
-    </DialogContent>
-  </Dialog>
-);
-
 /* ===== 删除确认弹窗 ===== */
 
 interface DeleteConfirmDialogProps {
@@ -624,6 +574,62 @@ const DeleteConfirmDialog = ({
   </Dialog>
 );
 
+/* ===== 已发现群列表 Drawer ===== */
+
+interface ChatsDrawerProps {
+  connector: Connector | null;
+  onOpenChange: (open: boolean) => void;
+}
+
+const ChatsDrawer = ({ connector, onOpenChange }: ChatsDrawerProps) => {
+  const chats: DiscoveredChat[] = connector?.discoveredChats ?? [];
+  return (
+    <Drawer
+      open={connector !== null}
+      direction="right"
+      onOpenChange={onOpenChange}
+    >
+      <DrawerContent className="w-full sm:max-w-xl">
+        <DrawerHeader>
+          <DrawerTitle>已发现群列表 · {connector?.name ?? ''}</DrawerTitle>
+          <DrawerDescription>
+            通过「同步群列表」从飞书拉取的群，可在规则编辑时引用为来源群或通知群。
+          </DrawerDescription>
+        </DrawerHeader>
+        <div className="flex-1 space-y-2 overflow-y-auto p-4">
+          {chats.length === 0 ? (
+            <Empty>
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <ListChecks />
+                </EmptyMedia>
+                <EmptyTitle>暂未发现群</EmptyTitle>
+                <EmptyDescription>
+                  该连接器尚未同步群列表，点击列表中的「同步群列表」按钮从飞书拉取。
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          ) : (
+            chats.map((chat: DiscoveredChat) => (
+              <div
+                key={chat.chatId}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border p-3"
+              >
+                <span className="min-w-0 text-sm font-medium">
+                  {chat.name || '（未命名群）'}
+                </span>
+                <span className="font-mono text-xs break-all text-muted-foreground">
+                  {chat.chatId}
+                </span>
+              </div>
+            ))
+          )}
+        </div>
+      </DrawerContent>
+    </Drawer>
+  );
+};
+
 /* ===== 页面 ===== */
 
 type FormTarget =
@@ -631,40 +637,50 @@ type FormTarget =
   | { mode: 'edit'; connector: Connector }
   | null;
 
-const GroupCell = ({ groups }: { groups: string[] }) => {
-  if (groups.length === 0) return <span className="text-muted-foreground">-</span>;
-  const text = groups.join('、');
-  return (
-    <span className="block max-w-[160px] truncate" title={text}>
-      {text}
-    </span>
-  );
-};
-
 const ConnectorsPage = () => {
   const { data, isLoading, isError, error, refetch } = useConnectors();
   const connectors = data ?? [];
   const [formTarget, setFormTarget] = useState<FormTarget>(null);
-  const [checkTarget, setCheckTarget] = useState<Connector | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Connector | null>(null);
+  const [chatsTarget, setChatsTarget] = useState<Connector | null>(null);
   const checkMutation = useCheckConnector();
+  const syncMutation = useSyncConnectorChats();
   const deleteMutation = useDeleteConnector();
-
-  const openCheck = (connector: Connector) => {
-    checkMutation.reset();
-    setCheckTarget(connector);
-    checkMutation.mutate(connector.id);
-  };
-
-  const closeCheck = (open: boolean) => {
-    if (!open) {
-      setCheckTarget(null);
-      checkMutation.reset();
-    }
-  };
 
   const closeDelete = (open: boolean) => {
     if (!open) setDeleteTarget(null);
+  };
+
+  const closeChats = (open: boolean) => {
+    if (!open) setChatsTarget(null);
+  };
+
+  const handleCheck = (connector: Connector) => {
+    checkMutation.mutate(connector.id, {
+      onSuccess: (result: ConnectorCheckResult) => {
+        if (result.passed) {
+          toast.success('授权校验通过');
+        } else {
+          toast.error(
+            result.issues.length > 0 ? result.issues[0] : '授权校验未通过，请检查 App ID / App Secret',
+          );
+        }
+      },
+      onError: (err: unknown) => {
+        toast.error(getApiErrorMessage(err, '配置检查失败，请稍后重试'));
+      },
+    });
+  };
+
+  const handleSyncChats = (connector: Connector) => {
+    syncMutation.mutate(connector.id, {
+      onSuccess: (chats: DiscoveredChat[]) => {
+        toast.success(`已同步到 ${chats.length} 个群`);
+      },
+      onError: (err: unknown) => {
+        toast.error(getApiErrorMessage(err, '同步群列表失败，请稍后重试'));
+      },
+    });
   };
 
   const confirmDelete = async () => {
@@ -682,23 +698,14 @@ const ConnectorsPage = () => {
     <div>
       <PageHeader
         title="连接器管理"
-        description="维护独立的飞书连接器信息与凭证引用，本平台不保存真实 Secret/Token。"
+        description="配置飞书应用凭证并完成配置检查后，平台将实时监听该应用所收到的群消息，按已发布规则创建真实飞书待办并发送结果通知。App Secret 只在服务端加密存储，界面与接口不再回显。"
         actions={
-          <Button onClick={() => setFormTarget({ mode: 'create' })}>
+          <Button onClick={() => setFormTarget({ mode: 'create' })} className="whitespace-nowrap">
             <Plus />
             新增连接器
           </Button>
         }
       />
-      <Alert className="mb-6">
-        <ShieldCheck />
-        <AlertTitle>凭据边界</AlertTitle>
-        <AlertDescription>
-          <p>
-            本平台不保存真实 Secret/Token，仅记录非敏感凭证引用（credentialRef）；真实凭据由接入方运行时的密钥体系管理，任何列表、日志与导出都不包含明文凭据。
-          </p>
-        </AlertDescription>
-      </Alert>
 
       {isLoading ? (
         <div className="rounded-lg border bg-card p-5">
@@ -732,7 +739,7 @@ const ConnectorsPage = () => {
             </EmptyMedia>
             <EmptyTitle>暂无连接器</EmptyTitle>
             <EmptyDescription>
-              还没有配置任何飞书连接器，新增一个连接器后即可为规则绑定消息来源。
+              还没有配置任何飞书应用连接，新增连接器并完成配置检查后，平台将实时监听该应用的群消息。
             </EmptyDescription>
           </EmptyHeader>
           <Button onClick={() => setFormTarget({ mode: 'create' })}>
@@ -750,12 +757,10 @@ const ConnectorsPage = () => {
                 <TableHead className="px-4">名称</TableHead>
                 <TableHead className="px-4">环境</TableHead>
                 <TableHead className="px-4">飞书 App ID</TableHead>
-                <TableHead className="px-4">来源群 / 通知群</TableHead>
-                <TableHead className="px-4">时区</TableHead>
-                <TableHead className="px-4">负责人数据源</TableHead>
+                <TableHead className="px-4">授权状态</TableHead>
+                <TableHead className="px-4">Secret</TableHead>
                 <TableHead className="px-4">扫描周期</TableHead>
                 <TableHead className="px-4">状态</TableHead>
-                <TableHead className="px-4">创建时间</TableHead>
                 <TableHead className="px-4 text-right">操作</TableHead>
               </TableRow>
             </TableHeader>
@@ -763,9 +768,22 @@ const ConnectorsPage = () => {
               {connectors.map((connector: Connector) => (
                 <TableRow key={connector.id}>
                   <TableCell className="max-w-[160px] px-4 font-medium">
-                    <span className="block truncate" title={connector.name}>
-                      {connector.name}
-                    </span>
+                    <div className="flex flex-col gap-0.5">
+                      <span className="block truncate" title={connector.name}>
+                        {connector.name}
+                      </span>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="text-muted-foreground h-auto px-1 py-0.5 text-xs whitespace-nowrap hover:text-foreground"
+                        aria-label={`查看连接器 ${connector.name} 的已发现群列表`}
+                        onClick={() => setChatsTarget(connector)}
+                      >
+                        <ListChecks className="size-3" />
+                        {connector.discoveredChats.length} 个已发现群
+                      </Button>
+                    </div>
                   </TableCell>
                   <TableCell className="px-4">
                     <Badge
@@ -776,31 +794,19 @@ const ConnectorsPage = () => {
                     </Badge>
                   </TableCell>
                   <TableCell className="px-4">
-                    <div className="flex flex-col gap-1">
-                      <span className="font-mono text-xs">{connector.feishuAppIdMasked}</span>
-                      {connector.credentialRef ? (
-                        <span
-                          className="block max-w-[160px] truncate font-mono text-xs text-muted-foreground"
-                          title={connector.credentialRef}
-                        >
-                          {connector.credentialRef}
-                        </span>
-                      ) : (
-                        <Badge variant="outline" className="w-fit whitespace-nowrap bg-muted text-muted-foreground border-border">
-                          未设置凭证引用
-                        </Badge>
-                      )}
-                    </div>
+                    <span className="font-mono text-xs break-all">
+                      {connector.feishuAppIdMasked}
+                    </span>
                   </TableCell>
                   <TableCell className="px-4">
-                    <div className="flex flex-col gap-1">
-                      <GroupCell groups={connector.sourceGroups} />
-                      <GroupCell groups={connector.notifyGroups} />
-                    </div>
+                    <AuthStatusBadge status={connector.authStatus} />
                   </TableCell>
-                  <TableCell className="px-4 text-xs">{connector.timezone}</TableCell>
-                  <TableCell className="px-4">
-                    {OWNER_SOURCE_LABELS[connector.ownerSource]}
+                  <TableCell className="px-4 text-xs">
+                    {connector.secretConfigured ? (
+                      <span className="text-success">已配置</span>
+                    ) : (
+                      <span className="text-muted-foreground">未配置</span>
+                    )}
                   </TableCell>
                   <TableCell className="px-4">
                     {connector.scanPeriodMinutes} 分钟
@@ -818,11 +824,38 @@ const ConnectorsPage = () => {
                       {CONNECTOR_STATUS_LABELS[connector.status]}
                     </Badge>
                   </TableCell>
-                  <TableCell className="px-4 text-xs">
-                    {formatDateTime(connector.createdAt)}
-                  </TableCell>
                   <TableCell className="px-4">
                     <div className="flex items-center justify-end gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label={`配置检查 ${connector.name}`}
+                        disabled={
+                          checkMutation.isPending && checkMutation.variables === connector.id
+                        }
+                        onClick={() => handleCheck(connector)}
+                      >
+                        {checkMutation.isPending && checkMutation.variables === connector.id ? (
+                          <LoaderCircle className="animate-spin" />
+                        ) : (
+                          <ShieldCheck />
+                        )}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label={`同步群列表 ${connector.name}`}
+                        disabled={
+                          syncMutation.isPending && syncMutation.variables === connector.id
+                        }
+                        onClick={() => handleSyncChats(connector)}
+                      >
+                        {syncMutation.isPending && syncMutation.variables === connector.id ? (
+                          <LoaderCircle className="animate-spin" />
+                        ) : (
+                          <RefreshCw />
+                        )}
+                      </Button>
                       <Button
                         variant="ghost"
                         size="icon"
@@ -832,14 +865,6 @@ const ConnectorsPage = () => {
                         }
                       >
                         <Pencil />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        aria-label={`检查连接器配置 ${connector.name}`}
-                        onClick={() => openCheck(connector)}
-                      >
-                        <ShieldCheck />
                       </Button>
                       <Button
                         variant="ghost"
@@ -867,17 +892,7 @@ const ConnectorsPage = () => {
         />
       ) : null}
 
-      <CheckResultDialog
-        target={checkTarget}
-        result={checkMutation.data}
-        isPending={checkMutation.isPending}
-        isError={checkMutation.isError}
-        error={checkMutation.error}
-        onRetry={() => {
-          if (checkTarget) checkMutation.mutate(checkTarget.id);
-        }}
-        onOpenChange={closeCheck}
-      />
+      <ChatsDrawer connector={chatsTarget} onOpenChange={closeChats} />
 
       <DeleteConfirmDialog
         target={deleteTarget}

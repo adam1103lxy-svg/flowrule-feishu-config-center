@@ -4,12 +4,14 @@ import {
   CANCEL_SCOPES,
   CONDITION_TYPES,
   DEDUP_FIELDS,
+  DUE_POLICY_MODES,
   FAILURE_ACTIONS,
   MESSAGE_TYPES,
-  NOTIFY_TARGET_TYPES,
+  RULE_ACTIONS,
   SENDER_ROLES,
   TIMING_MODES,
   type ConditionType,
+  type NotifyTarget,
   type Rule,
   type RuleConfig,
   type RuleCondition,
@@ -90,6 +92,17 @@ export const ruleFormSchema = z
     ]),
     sourceConnectorId: z.string(),
     sourceGroups: z.array(z.string()),
+    action: z.enum(RULE_ACTIONS),
+    sourceChatId: z.string(),
+    sourceChatName: z.string(),
+    notifyChatId: z.string(),
+    notifyChatName: z.string(),
+    allowedSenders: z.array(
+      z.object({
+        name: z.string(),
+        openId: z.string(),
+      }),
+    ),
     trigger: conditionGroupFormSchema,
     exclusions: conditionGroupFormSchema,
     extractionEnabled: z.boolean(),
@@ -97,8 +110,16 @@ export const ruleFormSchema = z
       objectLabel: z.string(),
       objectPattern: z.string(),
       versionPattern: z.string(),
+      releaseRatioPattern: z.string(),
     }),
-    assigneeMode: z.enum(['none', 'mention', 'sender', 'static', 'external_map']),
+    assigneeMode: z.enum([
+      'none',
+      'mention_first_else_sender',
+      'mention',
+      'sender',
+      'static',
+      'external_map',
+    ]),
     staticUsers: z.array(z.string()),
     externalMap: z.array(
       z.object({
@@ -113,14 +134,13 @@ export const ruleFormSchema = z
       .int('需为整数')
       .min(0, '延迟分钟数不能为负'),
     fixedTime: z.string(),
-    taskTitleTemplate: z.string().min(1, '请输入任务标题模板'),
+    dueAtMode: z.enum(DUE_POLICY_MODES),
+    dueAtDelayMinutes: z
+      .string()
+      .refine((v: string) => v === '' || /^\d+$/u.test(v), '请输入有效数字'),
+    dueAtFixedTime: z.string(),
+    taskTitleTemplate: z.string().min(1, '请输入待办标题模板'),
     taskDescTemplate: z.string(),
-    notifyTargets: z.array(
-      z.object({
-        type: z.enum(NOTIFY_TARGET_TYPES),
-        value: z.string(),
-      }),
-    ),
     dedupFields: z.array(z.enum(DEDUP_FIELDS)),
     cancelWords: z.array(z.string()),
     cancelScope: z.enum(CANCEL_SCOPES),
@@ -161,6 +181,16 @@ export const ruleFormSchema = z
           path: ['extraction', 'versionPattern'],
         });
       }
+      if (
+        data.extraction.releaseRatioPattern &&
+        !isValidRegex(data.extraction.releaseRatioPattern)
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          message: '正则无效',
+          path: ['extraction', 'releaseRatioPattern'],
+        });
+      }
     }
     if (data.assigneeMode === 'static' && data.staticUsers.length === 0) {
       ctx.addIssue({
@@ -195,15 +225,44 @@ export const ruleFormSchema = z
         path: ['delayMinutes'],
       });
     }
-    data.notifyTargets.forEach((target, index) => {
-      if (target.type !== 'source_group' && !target.value.trim()) {
+    data.allowedSenders.forEach((row, index) => {
+      const hasName = row.name.trim() !== '';
+      const hasOpenId = row.openId.trim() !== '';
+      if (hasName !== hasOpenId) {
         ctx.addIssue({
           code: 'custom',
-          message: '请填写通知目标值',
-          path: ['notifyTargets', index, 'value'],
+          message: '姓名与 open_id 需成对填写',
+          path: ['allowedSenders', index, 'openId'],
+        });
+      } else if (hasOpenId && !row.openId.trim().startsWith('ou_')) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'open_id 需以 ou_ 开头',
+          path: ['allowedSenders', index, 'openId'],
         });
       }
     });
+    if (
+      data.dueAtMode === 'relative_minutes' &&
+      (!/^\d+$/u.test(data.dueAtDelayMinutes) ||
+        Number(data.dueAtDelayMinutes) <= 0)
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        message: '请输入大于 0 的延迟分钟数',
+        path: ['dueAtDelayMinutes'],
+      });
+    }
+    if (
+      data.dueAtMode === 'fixed_next_day' &&
+      !TIME_PATTERN.test(data.dueAtFixedTime)
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        message: '请按 HH:mm 格式输入有效时间，如 18:00',
+        path: ['dueAtFixedTime'],
+      });
+    }
   });
 
 export type RuleFormValues = z.infer<typeof ruleFormSchema>;
@@ -227,20 +286,33 @@ export const createDefaultFormValues = (): RuleFormValues => ({
   type: 'manual_assign',
   sourceConnectorId: '',
   sourceGroups: [],
+  action: 'create_task',
+  sourceChatId: '',
+  sourceChatName: '',
+  notifyChatId: '',
+  notifyChatName: '',
+  allowedSenders: [{ name: '', openId: '' }],
   trigger: { match: 'all', conditions: [createEmptyCondition()] },
   exclusions: { match: 'all', conditions: [] },
   extractionEnabled: false,
-  extraction: { objectLabel: '', objectPattern: '', versionPattern: '' },
-  assigneeMode: 'none',
+  extraction: {
+    objectLabel: '',
+    objectPattern: '',
+    versionPattern: '',
+    releaseRatioPattern: '',
+  },
+  assigneeMode: 'mention_first_else_sender',
   staticUsers: [],
   externalMap: [{ key: '', user: '' }],
   assigneeFallback: '',
   timingMode: 'immediate',
   delayMinutes: 30,
   fixedTime: '09:00',
+  dueAtMode: 'none',
+  dueAtDelayMinutes: '30',
+  dueAtFixedTime: '18:00',
   taskTitleTemplate: '{{rule_name}}',
   taskDescTemplate: '',
-  notifyTargets: [{ type: 'source_group', value: '' }],
   dedupFields: [],
   cancelWords: [],
   cancelScope: 'rule',
@@ -264,6 +336,21 @@ export const buildFormValues = (rule: Rule): RuleFormValues => ({
   type: rule.type,
   sourceConnectorId: rule.config.sourceConnectorId ?? '',
   sourceGroups: rule.config.sourceGroups ?? [],
+  action: rule.config.action ?? 'create_task',
+  sourceChatId: rule.config.sourceChatId ?? '',
+  sourceChatName: rule.config.sourceChatName ?? '',
+  notifyChatId:
+    rule.config.notifyChatId ??
+    rule.config.notifyTargets?.find((t) => t.type === 'notify_group')?.value ??
+    '',
+  notifyChatName: rule.config.notifyChatName ?? '',
+  allowedSenders:
+    rule.config.allowedSenders && rule.config.allowedSenders.length > 0
+      ? rule.config.allowedSenders.map((s) => ({
+          name: s.name,
+          openId: s.openId,
+        }))
+      : [{ name: '', openId: '' }],
   trigger: {
     match: rule.config.trigger?.match ?? 'all',
     conditions: (rule.config.trigger?.conditions ?? []).map(toConditionFormValues),
@@ -277,8 +364,9 @@ export const buildFormValues = (rule: Rule): RuleFormValues => ({
     objectLabel: rule.config.extraction?.objectLabel ?? '',
     objectPattern: rule.config.extraction?.objectPattern ?? '',
     versionPattern: rule.config.extraction?.versionPattern ?? '',
+    releaseRatioPattern: rule.config.extraction?.releaseRatioPattern ?? '',
   },
-  assigneeMode: rule.config.assignee?.mode ?? 'none',
+  assigneeMode: rule.config.assignee?.mode ?? 'mention_first_else_sender',
   staticUsers: rule.config.assignee?.staticUsers ?? [],
   externalMap:
     rule.config.assignee?.externalMap && rule.config.assignee.externalMap.length > 0
@@ -288,12 +376,14 @@ export const buildFormValues = (rule: Rule): RuleFormValues => ({
   timingMode: rule.config.timing?.mode ?? 'immediate',
   delayMinutes: rule.config.timing?.delayMinutes ?? 30,
   fixedTime: rule.config.timing?.fixedTime ?? '09:00',
+  dueAtMode: rule.config.dueAt?.mode ?? 'none',
+  dueAtDelayMinutes:
+    rule.config.dueAt?.delayMinutes != null
+      ? String(rule.config.dueAt.delayMinutes)
+      : '30',
+  dueAtFixedTime: rule.config.dueAt?.fixedTime ?? '18:00',
   taskTitleTemplate: rule.config.taskTitleTemplate ?? '',
   taskDescTemplate: rule.config.taskDescTemplate ?? '',
-  notifyTargets:
-    rule.config.notifyTargets && rule.config.notifyTargets.length > 0
-      ? rule.config.notifyTargets.map((t) => ({ type: t.type, value: t.value ?? '' }))
-      : [{ type: 'source_group', value: '' }],
   dedupFields: rule.config.dedupFields ?? [],
   cancelWords: rule.config.cancelWords ?? [],
   cancelScope: rule.config.cancelScope ?? 'rule',
@@ -340,14 +430,34 @@ export const buildRuleConfig = (data: RuleFormValues): RuleConfig => {
     ...(data.timingMode === 'fixed_next_day' ? { fixedTime: data.fixedTime } : {}),
   };
 
-  const notifyTargets = data.notifyTargets.map((t) => ({
-    type: t.type as (typeof NOTIFY_TARGET_TYPES)[number],
-    ...(t.type !== 'source_group' && t.value.trim() ? { value: t.value.trim() } : {}),
-  }));
+  const dueAt =
+    data.dueAtMode === 'none'
+      ? null
+      : {
+          mode: data.dueAtMode,
+          ...(data.dueAtMode === 'relative_minutes' && data.dueAtDelayMinutes
+            ? { delayMinutes: Number(data.dueAtDelayMinutes) }
+            : {}),
+          ...(data.dueAtMode === 'fixed_next_day'
+            ? { fixedTime: data.dueAtFixedTime }
+            : {}),
+        };
+
+  const notifyTargets: NotifyTarget[] = data.notifyChatId.trim()
+    ? [{ type: 'notify_group', value: data.notifyChatId.trim() }]
+    : [{ type: 'source_group' }];
 
   return {
     sourceConnectorId: data.sourceConnectorId || null,
     sourceGroups: data.sourceGroups,
+    action: data.action,
+    sourceChatId: data.sourceChatId.trim(),
+    sourceChatName: data.sourceChatName.trim(),
+    notifyChatId: data.notifyChatId.trim(),
+    notifyChatName: data.notifyChatName.trim(),
+    allowedSenders: data.allowedSenders
+      .filter((row) => row.name.trim() && row.openId.trim())
+      .map((row) => ({ name: row.name.trim(), openId: row.openId.trim() })),
     trigger: {
       match: data.trigger.match,
       conditions: data.trigger.conditions.map(toRuleCondition),
@@ -365,10 +475,14 @@ export const buildRuleConfig = (data: RuleFormValues): RuleConfig => {
           ...(data.extraction.versionPattern.trim()
             ? { versionPattern: data.extraction.versionPattern.trim() }
             : {}),
+          ...(data.extraction.releaseRatioPattern.trim()
+            ? { releaseRatioPattern: data.extraction.releaseRatioPattern.trim() }
+            : {}),
         }
       : null,
     assignee,
     timing,
+    dueAt,
     taskTitleTemplate: data.taskTitleTemplate,
     taskDescTemplate: data.taskDescTemplate,
     notifyTargets,

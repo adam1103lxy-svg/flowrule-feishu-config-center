@@ -1,12 +1,17 @@
 import { useState } from 'react';
 import {
+  BellRing,
+  CalendarClock,
   Check,
   Download,
   FileJson,
   Info,
   KeyRound,
+  ListChecks,
+  Plug,
   RefreshCw,
   RotateCcw,
+  ScrollText,
   TriangleAlert,
   Webhook,
 } from 'lucide-react';
@@ -180,7 +185,7 @@ const ERROR_CODES: ErrorCodeRow[] = [
 const SIGNATURE_STEPS: string[] = [
   '（扩展方案预留，当前未启用）启用后：平台在规则发布后，使用 Webhook Secret 对请求 body 计算 HMAC-SHA256 签名。',
   '推送请求头携带时间戳与签名（X-FlowRule-Timestamp / X-FlowRule-Signature）。',
-  '接入方用相同 Secret 对原始 body 重算签名，并与请求头中的签名比对。',
+  '接收方用相同 Secret 对原始 body 重算签名，并与请求头中的签名比对。',
   '校验通过后更新本地配置缓存；校验失败返回 401 并记录告警，不更新缓存。',
 ];
 
@@ -215,21 +220,60 @@ const CHECKLIST: ChecklistItem[] = [
   { key: 'retry', label: '失败重试与告警链路演练通过' },
 ];
 
+interface SaasStep {
+  icon: typeof Plug;
+  title: string;
+  description: string;
+}
+
+const SAAS_STEPS: SaasStep[] = [
+  {
+    icon: Plug,
+    title: '配置飞书应用连接',
+    description:
+      '在连接中心填写飞书应用 App ID / App Secret 并通过配置检查，平台开始实时监听来源群消息。',
+  },
+  {
+    icon: ListChecks,
+    title: '配置并发布规则',
+    description:
+      '在规则列表配置来源群、触发与排除条件、负责人策略、执行时机、待办标题内容、结果通知群与去重键，并发布版本。',
+  },
+  {
+    icon: CalendarClock,
+    title: '到期自动创建飞书待办',
+    description:
+      '平台在 run_at 到期时调用飞书 Task v2 创建待办（幂等 client_token），并回读核验创建结果。',
+  },
+  {
+    icon: BellRing,
+    title: '发送待办链接通知',
+    description:
+      '待办创建成功后，平台向结果通知群发送待办链接，负责人可直接点击查看。',
+  },
+  {
+    icon: ScrollText,
+    title: '全程可观测',
+    description:
+      '消息接收、任务调度、待办创建与结果通知的全过程均可在运行中心与审计中查看。',
+  },
+];
+
 const ACCESS_MODES = [
   {
     icon: RefreshCw,
     title: '配置拉取 API',
     status: 'available' as const,
     description:
-      '接入方运行时定期调用 GET /openapi/v1/published-config（妙搭 Open API Key Bearer 鉴权），拉取最新发布规则配置，在本地评估消息。',
-    scenario: '适合有轮询能力的任务运行时，规则变更可接受分钟级生效。',
+      '外部系统运行时定期调用 GET /openapi/v1/published-config（妙搭 Open API Key Bearer 鉴权），拉取最新发布规则配置，在本地评估消息。',
+    scenario: '适合有轮询能力的外部任务运行时，规则变更可接受分钟级生效。',
   },
   {
     icon: FileJson,
     title: '导出 JSON',
     status: 'available' as const,
     description:
-      '登录用户在本页面导出当前发布配置 JSON 文件（页面功能，非对外 API），随接入方部署发布。',
+      '登录用户在本页面导出当前发布配置 JSON 文件（页面功能，非对外 API），随外部系统部署发布。',
     scenario: '适合变更频率低、配置随代码版本一起上线的场景。',
   },
   {
@@ -237,7 +281,7 @@ const ACCESS_MODES = [
     title: '发布 Webhook',
     status: 'extension' as const,
     description:
-      '扩展接入方案（当前未启用）：规划为规则发布后平台主动推送新配置到接入方回调地址。当前平台未实现主动投递，接入方以轮询 published-config 为准。',
+      '扩展接入方案（当前未启用）：规划为规则发布后平台主动推送新配置到外部系统回调地址。当前平台未实现主动投递，外部系统以轮询 published-config 为准。',
     scenario: '启用前请勿依赖本方式做上线验收。',
   },
 ];
@@ -266,7 +310,7 @@ const IntegrationPage = () => {
     <div className="space-y-6">
       <PageHeader
         title="接入中心"
-        description="当前 2 种可用接入方式 + 1 种扩展方案（Webhook 未启用），代码示例、鉴权与幂等规范、上线验收清单。"
+        description="平台自身即可运行 SaaS 闭环：授权连接、发布规则后自动创建飞书待办并通知；外部拉取 API 为可选扩展。"
         actions={
           <>
             <Button
@@ -302,12 +346,49 @@ const IntegrationPage = () => {
 
       <Alert>
         <Info />
-        <AlertTitle>产品边界</AlertTitle>
+        <AlertTitle>SaaS 闭环</AlertTitle>
         <AlertDescription>
-          本平台是配置与接入平台：负责规则配置、版本发布、模拟测试与审计。接入方运行时负责订阅飞书消息、拉取已发布规则、执行任务
-          API、回写结果。
+          平台自身完成从消息监听、规则评估到飞书待办创建与结果通知的完整闭环，全程可在运行中心与审计中查看。外部拉取
+          API 为可选扩展，运行 SaaS 闭环无需任何外部部署。
         </AlertDescription>
       </Alert>
+
+      <Card>
+        <CardHeader className="p-5">
+          <CardTitle className="text-base">平台自身如何运行</CardTitle>
+          <CardDescription>
+            完成连接配置并发布规则后，平台按以下步骤自动执行闭环。
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="p-5 pt-0">
+          <ol className="space-y-4">
+            {SAAS_STEPS.map((step: SaasStep, index: number) => (
+              <li key={step.title} className="flex gap-3">
+                <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-sm font-semibold text-primary">
+                  {index + 1}
+                </span>
+                <div className="min-w-0 flex-1 space-y-1">
+                  <div className="flex items-center gap-2">
+                    <step.icon className="size-4 shrink-0 text-primary" />
+                    <p className="text-sm font-medium">{step.title}</p>
+                  </div>
+                  <p className="break-words text-sm text-muted-foreground">
+                    {step.description}
+                  </p>
+                </div>
+              </li>
+            ))}
+          </ol>
+        </CardContent>
+      </Card>
+
+      <div className="space-y-1 pt-2">
+        <h2 className="text-lg font-semibold tracking-tight">可选扩展 · 外部接入</h2>
+        <p className="text-sm text-muted-foreground">
+          外部拉取 API 为可选扩展，运行 SaaS
+          闭环无需任何外部部署。以下能力供需要在自有系统中运行已发布规则的外部系统使用。
+        </p>
+      </div>
 
       <div className="grid gap-4 md:grid-cols-3">
         {ACCESS_MODES.map((mode) => (
@@ -480,7 +561,9 @@ const IntegrationPage = () => {
       <Card>
         <CardHeader className="p-5">
           <CardTitle className="text-base">环境变量清单</CardTitle>
-          <CardDescription>接入方运行时需要配置的环境变量。</CardDescription>
+          <CardDescription>
+            外部接入运行时需要配置的环境变量（可选扩展，运行 SaaS 闭环无需配置）。
+          </CardDescription>
         </CardHeader>
         <CardContent className="p-5 pt-0">
           <Table>
@@ -536,7 +619,7 @@ const IntegrationPage = () => {
         <Card>
           <CardHeader className="p-5">
             <CardTitle className="text-base">幂等与重试</CardTitle>
-            <CardDescription>接入方运行时的幂等建议与重试策略。</CardDescription>
+            <CardDescription>外部接入运行时的幂等建议与重试策略（可选扩展）。</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4 p-5 pt-0">
             <div>
@@ -555,7 +638,7 @@ const IntegrationPage = () => {
         <Card>
           <CardHeader className="p-5">
             <CardTitle className="text-base">错误码</CardTitle>
-            <CardDescription>平台返回的 HTTP 状态码与接入方处理建议。</CardDescription>
+            <CardDescription>平台返回的 HTTP 状态码与外部系统处理建议。</CardDescription>
           </CardHeader>
           <CardContent className="p-5 pt-0">
             <Table>

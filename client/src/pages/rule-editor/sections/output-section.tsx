@@ -1,5 +1,3 @@
-import { useFieldArray } from 'react-hook-form';
-import { Plus, Trash2 } from 'lucide-react';
 import {
   FormControl,
   FormDescription,
@@ -30,21 +28,26 @@ import {
   DEDUP_FIELD_LABELS,
   FAILURE_ACTIONS,
   FAILURE_ACTION_LABELS,
-  NOTIFY_TARGET_TYPES,
-  NOTIFY_TARGET_TYPE_LABELS,
 } from '@shared/api.interface';
 
 interface SectionProps {
   form: RuleForm;
 }
 
-const TEMPLATE_VARIABLES = ['{{rule_name}}', '{{object_key}}', '{{object_version}}', '{{sender}}', '{{source_group}}'];
+const TEMPLATE_VARIABLES = [
+  '{{object_key}}',
+  '{{object_version}}',
+  '{{release_ratio}}',
+  '{{sender}}',
+  '{{source_group}}',
+  '{{rule_name}}',
+];
 
 export const TemplatesSection = ({ form }: SectionProps) => (
   <SectionCard
     id="section-templates"
-    title="任务模板"
-    description="任务标题与说明支持以下变量替换。"
+    title="待办标题与内容模板"
+    description="待办标题与内容支持以下占位符替换。"
   >
     <FormField
       control={form.control}
@@ -52,7 +55,7 @@ export const TemplatesSection = ({ form }: SectionProps) => (
       render={({ field }) => (
         <FormItem>
           <FormLabel>
-            任务标题模板 <span aria-hidden="true" className="text-destructive">*</span>
+            待办标题模板 <span aria-hidden="true" className="text-destructive">*</span>
           </FormLabel>
           <FormControl>
             <Input placeholder="如：{{rule_name}} - {{object_key}}" {...field} />
@@ -66,7 +69,7 @@ export const TemplatesSection = ({ form }: SectionProps) => (
       name="taskDescTemplate"
       render={({ field }) => (
         <FormItem>
-          <FormLabel>任务说明模板</FormLabel>
+          <FormLabel>待办内容模板</FormLabel>
           <FormControl>
             <Textarea
               rows={4}
@@ -79,96 +82,24 @@ export const TemplatesSection = ({ form }: SectionProps) => (
         </FormItem>
       )}
     />
-    <FormDescription>
-      可用变量：{TEMPLATE_VARIABLES.join('、')}。
-    </FormDescription>
-  </SectionCard>
-);
-
-export const NotifySection = ({ form }: SectionProps) => {
-  const { fields, append, remove } = useFieldArray({
-    control: form.control,
-    name: 'notifyTargets',
-  });
-
-  return (
-    <SectionCard
-      id="section-notify"
-      title="通知目标"
-      description="任务创建后向哪些目标发送通知；发布前至少配置一个。"
-    >
-      <div className="space-y-2">
-        {fields.map((row, index) => (
-          <div
-            key={row.id}
-            className="flex flex-wrap items-end gap-3 rounded-lg border border-border p-3"
+    <div className="space-y-1.5">
+      <div className="text-sm font-medium">可用占位符</div>
+      <div className="flex flex-wrap gap-1.5">
+        {TEMPLATE_VARIABLES.map((v: string) => (
+          <code
+            key={v}
+            className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground"
           >
-            <FormField
-              control={form.control}
-              name={`notifyTargets.${index}.type`}
-              render={({ field }) => (
-                <FormItem className="w-[160px]">
-                  <FormLabel>目标 {index + 1}</FormLabel>
-                  <Select onValueChange={field.onChange} value={field.value}>
-                    <FormControl>
-                      <SelectTrigger>
-                        <SelectValue placeholder="请选择类型" />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      {NOTIFY_TARGET_TYPES.map((t) => (
-                        <SelectItem key={t} value={t}>
-                          {NOTIFY_TARGET_TYPE_LABELS[t]}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name={`notifyTargets.${index}.value`}
-              render={({ field }) => (
-                <FormItem className="min-w-[220px] flex-1">
-                  <FormLabel>目标值</FormLabel>
-                  <FormControl>
-                    <Input placeholder="群名称 / 群 ID / user_id" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="text-destructive hover:text-destructive"
-              aria-label={`删除通知目标 ${index + 1}`}
-              onClick={() => remove(index)}
-            >
-              <Trash2 className="size-4" />
-            </Button>
-          </div>
+            {v}
+          </code>
         ))}
       </div>
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        className="whitespace-nowrap"
-        onClick={() => append({ type: 'source_group', value: '' })}
-      >
-        <Plus className="size-4" />
-        添加通知目标
-      </Button>
-      <p className="text-xs text-muted-foreground">
-        「来源群」表示命中消息所在的群，无需填写目标值。
+      <p className="text-sm text-muted-foreground">
+        占位符在待办创建时替换为实际提取值；未提取到时为空。
       </p>
-    </SectionCard>
-  );
-};
+    </div>
+  </SectionCard>
+);
 
 export const DedupSection = ({ form }: SectionProps) => (
   <SectionCard
@@ -272,7 +203,7 @@ export const FailureSection = ({ form }: SectionProps) => (
   <SectionCard
     id="section-failure"
     title="失败策略"
-    description="任务创建失败（如负责人无法解析）时的处理方式与重试。"
+    description="待办创建失败（如负责人无法解析）时的处理方式与重试。"
   >
     <div className="flex flex-wrap gap-4">
       <FormField

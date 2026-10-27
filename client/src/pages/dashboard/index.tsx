@@ -2,15 +2,23 @@ import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import {
   AlertTriangle,
+  Bell,
   CheckCircle2,
+  ChevronRight,
   CircleOff,
+  Clock,
   FileEdit,
   FlaskConical,
   ListChecks,
+  ListTodo,
+  MessageSquareText,
   RefreshCw,
+  Zap,
+  type LucideIcon,
 } from 'lucide-react';
 
 import { useDashboardStats } from '@client/src/api/dashboard';
+import { useRuns } from '@client/src/api/runs';
 import PageHeader from '@client/src/components/shared/page-header';
 import { Alert, AlertDescription, AlertTitle } from '@client/src/components/ui/alert';
 import { Badge } from '@client/src/components/ui/badge';
@@ -77,8 +85,54 @@ const ListSkeleton = () => (
   </div>
 );
 
+interface FlowStep {
+  icon: LucideIcon;
+  title: string;
+  caption: string;
+}
+
+const FLOW_STEPS: FlowStep[] = [
+  { icon: MessageSquareText, title: '来源群消息', caption: '平台监听飞书群消息' },
+  { icon: Zap, title: '规则命中', caption: '已发布规则触发评估' },
+  { icon: Clock, title: '等待执行', caption: '到达规则设定的 run_at' },
+  { icon: ListTodo, title: '创建飞书待办', caption: '真实创建并指派负责人' },
+  { icon: Bell, title: '结果通知', caption: '向结果通知群发送链接' },
+];
+
+const FlowSection = () => (
+  <Card className="p-5 lg:col-span-2">
+    <h2 className="text-sm font-semibold">执行流程</h2>
+    <p className="mt-1 text-xs text-muted-foreground">
+      平台监听飞书群消息，命中已发布规则后按设定时间自动执行，形成完整闭环。
+    </p>
+    <div className="mt-4 flex flex-wrap items-center gap-y-3">
+      {FLOW_STEPS.map((step: FlowStep, index: number) => (
+        <div key={step.title} className="flex items-center gap-2">
+          <div className="flex w-32 flex-col items-center gap-1.5 rounded-lg border bg-muted/30 p-3 text-center">
+            <div className="flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
+              <step.icon className="size-5" />
+            </div>
+            <p className="text-xs font-medium">{step.title}</p>
+            <p className="text-[11px] leading-tight text-muted-foreground">
+              {step.caption}
+            </p>
+          </div>
+          {index < FLOW_STEPS.length - 1 ? (
+            <ChevronRight
+              aria-hidden="true"
+              className="size-4 shrink-0 text-muted-foreground"
+            />
+          ) : null}
+        </div>
+      ))}
+    </div>
+  </Card>
+);
+
 const DashboardPage = () => {
   const { data, isLoading, error, refetch } = useDashboardStats();
+  const runsQuery = useRuns();
+  const runStats = runsQuery.data?.stats;
 
   if (error) {
     return (
@@ -110,7 +164,7 @@ const DashboardPage = () => {
     <div>
       <PageHeader
         title="工作台"
-        description="规则状态分布、近 7 天模拟测试与最近发布版本总览。"
+        description="规则状态分布、执行流程与真实待办运行情况总览。"
       />
 
       <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-6">
@@ -157,6 +211,56 @@ const DashboardPage = () => {
           hint={stats ? `命中 ${stats.simulationHits7d} · 失败 ${stats.simulationFailures7d}` : undefined}
           loading={isLoading}
         />
+      </div>
+
+      <div className="mt-6 grid gap-4 lg:grid-cols-3">
+        <FlowSection />
+
+        <Card className="flex flex-col p-5">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h2 className="text-sm font-semibold">运行中心</h2>
+              <p className="mt-1 text-xs text-muted-foreground">
+                已发布规则产生的真实待办执行记录，可重试或取消。
+              </p>
+            </div>
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+              <ListChecks className="size-5" />
+            </div>
+          </div>
+          {runsQuery.isLoading && !runsQuery.data ? (
+            <Skeleton className="mt-4 h-20 w-full" />
+          ) : (
+            <div className="mt-4 space-y-2 text-sm">
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">等待执行 / 待人工处理</span>
+                <span className="font-semibold">
+                  {(runStats?.pending ?? 0) + (runStats?.needs_review ?? 0)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">执行失败</span>
+                <span className="font-semibold text-destructive">
+                  {runStats?.failed ?? 0}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">待办已创建</span>
+                <span className="font-semibold text-success">
+                  {runStats?.created ?? 0}
+                </span>
+              </div>
+            </div>
+          )}
+          <Button
+            asChild
+            variant="outline"
+            size="sm"
+            className="mt-4 w-fit whitespace-nowrap"
+          >
+            <Link to="/runs">进入运行中心</Link>
+          </Button>
+        </Card>
       </div>
 
       <div className="mt-6 grid gap-6 lg:grid-cols-2">

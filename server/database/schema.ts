@@ -1,7 +1,7 @@
 /* eslint-disable */
 /** auto generated, do not edit */
 import { sql } from 'drizzle-orm';
-import { boolean, index, integer, pgTable, text, uuid, varchar, customType } from "drizzle-orm/pg-core"
+import { boolean, index, integer, pgTable, text, uniqueIndex, uuid, varchar, customType } from "drizzle-orm/pg-core"
 
 export const customTimestamptz = customType<{
   data: Date;
@@ -117,6 +117,84 @@ export const fileAttachmentArray = customType<{
   },
 });
 
+export const taskRun = pgTable("task_run", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  ruleId: uuid("rule_id").notNull(),
+  ruleCode: varchar("rule_code", { length: 64 }).notNull(),
+  ruleName: varchar("rule_name", { length: 100 }).notNull(),
+  connectionId: uuid("connection_id").notNull(),
+  messageEventId: uuid("message_event_id"),
+  messageId: varchar("message_id", { length: 128 }).notNull(),
+  status: varchar("status", { length: 20 }).notNull().default('pending'),
+  dedupKey: varchar("dedup_key", { length: 255 }).notNull().unique(),
+  clientToken: varchar("client_token", { length: 64 }).notNull().unique(),
+  assigneeOpenId: varchar("assignee_open_id", { length: 128 }).notNull(),
+  assigneeName: varchar("assignee_name", { length: 100 }).notNull(),
+  objectKey: varchar("object_key", { length: 200 }).notNull(),
+  objectVersion: varchar("object_version", { length: 100 }).notNull(),
+  releaseRatio: varchar("release_ratio", { length: 50 }).notNull(),
+  taskTitle: varchar("task_title", { length: 500 }).notNull(),
+  taskDesc: text("task_desc").notNull(),
+  notifyChatId: varchar("notify_chat_id", { length: 128 }).notNull(),
+  notifyChatName: varchar("notify_chat_name", { length: 200 }).notNull(),
+  sourceChatId: varchar("source_chat_id", { length: 128 }).notNull(),
+  sourceChatName: varchar("source_chat_name", { length: 200 }).notNull(),
+  runAt: customTimestamptz("run_at", { precision: 3 }).notNull(),
+  dueAt: customTimestamptz("due_at", { precision: 3 }),
+  taskGuid: varchar("task_guid", { length: 64 }).notNull(),
+  notifyMessageId: varchar("notify_message_id", { length: 128 }).notNull(),
+  notifyAttempts: integer("notify_attempts").notNull().default(0),
+  retryCount: integer("retry_count").notNull().default(0),
+  nextRetryAt: customTimestamptz("next_retry_at", { precision: 3 }),
+  lastError: text("last_error").notNull(),
+  leaseOwner: varchar("lease_owner", { length: 100 }).notNull(),
+  leaseExpiresAt: customTimestamptz("lease_expires_at", { precision: 3 }),
+  isDemo: boolean("is_demo").notNull().default(false),
+  // System field: Creation time (auto-filled, do not modify)
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Creator (auto-filled, do not modify)
+  createdBy: userProfile("_created_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+  // System field: Update time (auto-filled, do not modify)
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Updater (auto-filled, do not modify)
+  updatedBy: userProfile("_updated_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+}, (table) => [
+  uniqueIndex("idx_task_run_dedup").on(table.dedupKey),
+  uniqueIndex("idx_task_run_token").on(table.clientToken),
+  index("idx_task_run_status_run").on(table.status, table.runAt),
+]);
+
+export const messageEvent = pgTable("message_event", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  connectionId: uuid("connection_id").notNull(),
+  messageId: varchar("message_id", { length: 128 }).notNull(),
+  chatId: varchar("chat_id", { length: 128 }).notNull(),
+  chatName: varchar("chat_name", { length: 200 }).notNull(),
+  senderOpenId: varchar("sender_open_id", { length: 128 }).notNull(),
+  messageType: varchar("message_type", { length: 32 }).notNull().default('text'),
+  contentText: text("content_text").notNull(),
+  mentions: text("mentions").notNull().default('[]'),
+  rootId: varchar("root_id", { length: 128 }).notNull(),
+  replyDepth: integer("reply_depth").notNull().default(0),
+  sentAt: customTimestamptz("sent_at", { precision: 3 }).notNull(),
+  processed: boolean("processed").notNull().default(false),
+  // System field: Creation time (auto-filled, do not modify)
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Creator (auto-filled, do not modify)
+  createdBy: userProfile("_created_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+  // System field: Update time (auto-filled, do not modify)
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Updater (auto-filled, do not modify)
+  updatedBy: userProfile("_updated_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+}, (table) => [
+  uniqueIndex("idx_message_event_conn_msg").on(table.connectionId, table.messageId),
+  index("idx_message_event_unprocessed").on(table.processed, table.sentAt),
+]);
+
 export const auditLog = pgTable("audit_log", {
   id: uuid("id").primaryKey().defaultRandom(),
   action: varchar("action", { length: 32 }).notNull(),
@@ -216,7 +294,9 @@ export const connector = pgTable("connector", {
   ownerSource: varchar("owner_source", { length: 20 }).notNull().default('contact'),
   scanPeriodMinutes: integer("scan_period_minutes").notNull().default(5),
   status: varchar("status", { length: 20 }).notNull().default('active'),
-  credentialRef: varchar("credential_ref", { length: 255 }).notNull(),
+  appSecretEnc: text("app_secret_enc").notNull(),
+  authStatus: varchar("auth_status", { length: 20 }).notNull().default('unverified'),
+  discoveredChats: text("discovered_chats").notNull().default('[]'),
   // System field: Creation time (auto-filled, do not modify)
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
   // System field: Creator (auto-filled, do not modify)
@@ -251,7 +331,9 @@ export const workspace = pgTable("workspace", {
 // table aliases
 export const auditLogTable = auditLog;
 export const connectorTable = connector;
+export const messageEventTable = messageEvent;
 export const ruleTable = rule;
 export const ruleVersionTable = ruleVersion;
 export const simulationRunTable = simulationRun;
+export const taskRunTable = taskRun;
 export const workspaceTable = workspace;

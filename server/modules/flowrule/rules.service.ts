@@ -6,10 +6,11 @@ import {
 } from '@nestjs/common';
 import { and, desc, eq, ilike, or, type SQL } from 'drizzle-orm';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
-import { rule, ruleVersion } from '@server/database/schema';
+import { connector, rule, ruleVersion } from '@server/database/schema';
 import type {
   PublishResult,
   Rule,
+  RuleConfig,
   RuleListQuery,
   RuleStatus,
   RuleVersion,
@@ -236,14 +237,49 @@ export class RulesService {
     return rows.map(toVersion);
   }
 
+  private async connectionIssues(config: RuleConfig): Promise<string[]> {
+    if (!config.sourceConnectorId) return [];
+    const [row] = await this.db
+      .select()
+      .from(connector)
+      .where(eq(connector.id, config.sourceConnectorId));
+    if (!row) return ['来源连接器不存在或已删除'];
+    const issues: string[] = [];
+    if (row.appSecretEnc === '') {
+      issues.push(`连接器「${row.name}」尚未配置 App Secret，无法完成真实授权`);
+    }
+    if (row.authStatus === 'invalid') {
+      issues.push(`连接器「${row.name}」授权凭证无效，请检查 App ID / App Secret`);
+    }
+    if (row.authStatus === 'unverified') {
+      issues.push(`连接器「${row.name}」授权未验证，请先在连接中心执行「配置检查」`);
+    }
+    if (row.status !== 'active') {
+      issues.push(`连接器「${row.name}」未启用，无法接收飞书消息`);
+    }
+    return issues;
+  }
+
   async validate(id: string): Promise<ValidationResult> {
     const target = await this.get(id);
-    return validateRuleConfig(target.config);
+    const validation = validateRuleConfig(target.config);
+    const issues = [
+      ...validation.issues,
+      ...(await this.connectionIssues(target.config)),
+    ];
+    return { passed: issues.length === 0, issues };
   }
 
   async publish(id: string, changelog: string, userId: string): Promise<PublishResult> {
     const target = await this.get(id);
-    const validation = validateRuleConfig(target.config);
+    const validation = {
+      passed: false,
+      issues: [
+        ...validateRuleConfig(target.config).issues,
+        ...(await this.connectionIssues(target.config)),
+      ],
+    };
+    validation.passed = validation.issues.length === 0;
     if (!validation.passed) {
       await this.db
         .update(rule)

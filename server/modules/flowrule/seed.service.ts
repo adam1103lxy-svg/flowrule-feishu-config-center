@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { count } from 'drizzle-orm';
+import { count, eq } from 'drizzle-orm';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
 import {
   auditLog,
@@ -31,7 +31,9 @@ const DEMO_CONNECTORS = [
     name: '生产 · 飞书主连接器',
     environment: 'prod',
     feishuAppId: 'cli_a1b2c3d4e5f60g78',
-    credentialRef: 'secret-manager://team/feishu-prod',
+    appSecretEnc: '',
+    authStatus: 'unverified',
+    discoveredChats: '[]',
     sourceGroups: ['客服支持群', '发布值班群', '配置变更通知群'],
     notifyGroups: ['配置变更通知群', '任务提醒群'],
     timezone: 'Asia/Shanghai',
@@ -43,7 +45,9 @@ const DEMO_CONNECTORS = [
     name: '测试 · 沙箱连接器',
     environment: 'test',
     feishuAppId: 'cli_t9s8r7q6p5o4n321',
-    credentialRef: '',
+    appSecretEnc: '',
+    authStatus: 'unverified',
+    discoveredChats: '[]',
     sourceGroups: ['测试沙箱群'],
     notifyGroups: ['测试沙箱群'],
     timezone: 'Asia/Shanghai',
@@ -66,6 +70,13 @@ const baseConfig: Pick<
   | 'cancelScope'
   | 'failureAction'
   | 'retryCount'
+  | 'action'
+  | 'sourceChatId'
+  | 'sourceChatName'
+  | 'notifyChatId'
+  | 'notifyChatName'
+  | 'allowedSenders'
+  | 'dueAt'
 > = {
   taskTitleTemplate: '【{{rule_name}}】处理 {{object_key}}',
   taskDescTemplate:
@@ -74,6 +85,13 @@ const baseConfig: Pick<
   cancelScope: 'rule',
   failureAction: 'pending_confirm',
   retryCount: 2,
+  action: 'create_task',
+  sourceChatId: '',
+  sourceChatName: '',
+  notifyChatId: '',
+  notifyChatName: '',
+  allowedSenders: [],
+  dueAt: null,
 };
 
 const DEMO_RULES: SeedRuleDef[] = [
@@ -212,6 +230,56 @@ const DEMO_RULES: SeedRuleDef[] = [
     },
   },
   {
+    name: '实际发布后24小时 · 崩溃与 ANR 检查',
+    code: 'crash_anr_check_24h',
+    description:
+      '应用实际发布（非提审/审核通过/准备发布）后 1440 分钟创建飞书待办，检查崩溃与 ANR。仅李鑫洋、邵麟宣、秦红梅可触发；@一人优先，否则消息发送者；结果通知到「迭代CheckList」。完成真实授权与群 ID/open_id 回填并端到端验证后再发布。',
+    type: 'check_24h',
+    status: 'draft',
+    config: {
+      ...baseConfig,
+      taskTitleTemplate:
+        '【崩溃与 ANR 检查】{{object_key}} {{object_version}} 发布后 24 小时检查',
+      taskDescTemplate:
+        '应用 {{object_key}} 版本 {{object_version}}（发布比例 {{release_ratio}}）已实际发布，请检查崩溃与 ANR 情况。来源群：{{source_group}}。',
+      sourceConnectorId: 'PLACEHOLDER_PROD',
+      sourceGroups: ['Swift-产品'],
+      sourceChatId: '',
+      sourceChatName: 'Swift-产品',
+      notifyChatId: '',
+      notifyChatName: '迭代CheckList',
+      action: 'create_task',
+      allowedSenders: [
+        { name: '李鑫洋', openId: '' },
+        { name: '邵麟宣', openId: '' },
+        { name: '秦红梅', openId: '' },
+      ],
+      trigger: {
+        match: 'all',
+        conditions: [
+          triggerCond('keyword', { keywords: ['实际发布', '全量发布', '发布完成'] }),
+        ],
+      },
+      exclusions: {
+        match: 'any',
+        conditions: [
+          triggerCond('keyword', { keywords: ['提审', '审核通过', '准备发布'] }),
+        ],
+      },
+      extraction: {
+        objectLabel: '应用',
+        objectPattern: '应用[:：]\\s*([\\w-]+)',
+        versionPattern: '版本[:：]\\s*(v\\d+\\.\\d+\\.\\d+)',
+        releaseRatioPattern: '(?:发布比例|放量)[:：]?\\s*(\\d+%)',
+      },
+      assignee: { mode: 'mention_first_else_sender' },
+      timing: { mode: 'relative_delay', delayMinutes: 1440 },
+      dueAt: null,
+      notifyTargets: [{ type: 'notify_group', value: '迭代CheckList' }],
+      dedupFields: ['object_key', 'object_version', 'release_ratio', 'rule_id'],
+    },
+  },
+  {
     name: '24小时检查 · 工单未响应升级',
     code: 'check_24h_v1',
     description: '识别工单消息，24 小时后检查响应情况（当前停用）。',
@@ -303,6 +371,8 @@ export class SeedService {
     @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
   ) {}
 
+  private migrateChecked = false;
+
   async ensureSeeded(): Promise<void> {
     if (!this.seeding) {
       this.seeding = this.doSeed().catch((error: unknown) => {
@@ -310,7 +380,51 @@ export class SeedService {
         throw error;
       });
     }
-    return this.seeding;
+    await this.seeding;
+    if (!this.migrateChecked) {
+      this.migrateChecked = true;
+      await this.ensureMigratedRule();
+    }
+  }
+
+  private async ensureMigratedRule(): Promise<void> {
+    const existing = await this.db
+      .select()
+      .from(rule)
+      .where(eq(rule.code, 'crash_anr_check_24h'));
+    if (existing.length > 0) return;
+    const [prodConnector] = await this.db
+      .select()
+      .from(connector)
+      .where(eq(connector.environment, 'prod'));
+    const def = DEMO_RULES.find((d) => d.code === 'crash_anr_check_24h');
+    if (!def || !prodConnector) return;
+    const config = { ...def.config };
+    if (config.sourceConnectorId === 'PLACEHOLDER_PROD') {
+      config.sourceConnectorId = prodConnector.id;
+    }
+    await this.db.insert(rule).values({
+      name: def.name,
+      code: def.code,
+      description: def.description,
+      type: def.type,
+      status: def.status,
+      currentVersion: 0,
+      config: JSON.stringify(config),
+      createdBy: null,
+      updatedBy: null,
+    });
+    await this.db.insert(auditLog).values({
+      action: 'rule_created',
+      entityType: 'rule',
+      entityId: def.code,
+      entityName: def.name,
+      summary: `迁移规则「${def.name}」为真实执行结构（保持草稿，待真实授权与端到端验证后发布）`,
+      detail: '',
+      isDemo: false,
+      createdBy: null,
+    });
+    this.logger.log('已插入迁移规则 crash_anr_check_24h');
   }
 
   private async doSeed(): Promise<void> {
@@ -324,7 +438,7 @@ export class SeedService {
       defaultScanPeriodMinutes: 5,
       pendingConfirmPolicy: '失败任务进入待确认列表，由规则负责人人工重试或关闭',
       securityNote:
-        '本配置平台不保存真实 Secret/Token，仅记录非敏感凭证引用（credentialRef）；妙搭 Open API Key 由应用管理员在平台侧创建、仅展示一次，本应用界面不管理密钥。演示环境不内置真实密钥。',
+        'App Secret 仅在保存时加密存入服务端，列表、日志、导出与接口均不回传明文；完成真实授权（配置检查）后平台才能接收消息并创建飞书待办。妙搭 Open API Key 由应用管理员在平台侧创建、仅展示一次，本应用界面不管理密钥，演示环境不内置真实密钥。',
       createdBy: null,
       updatedBy: null,
     });

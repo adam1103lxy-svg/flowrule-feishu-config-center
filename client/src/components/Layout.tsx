@@ -6,6 +6,7 @@ import {
   FileText,
   FlaskConical,
   LayoutDashboard,
+  ListChecks,
   Menu,
   Plug,
   ScrollText,
@@ -23,8 +24,9 @@ import {
 
 const NAV_ITEMS = [
   { to: '/', label: '工作台', icon: LayoutDashboard },
-  { to: '/connectors', label: '连接器管理', icon: Plug },
+  { to: '/connectors', label: '连接中心', icon: Plug },
   { to: '/rules', label: '规则列表', icon: FileText },
+  { to: '/runs', label: '运行中心', icon: ListChecks },
   { to: '/simulation', label: '模拟测试台', icon: FlaskConical },
   { to: '/integration', label: '接入中心', icon: Boxes },
   { to: '/audit', label: '审计与运行记录', icon: ScrollText },
@@ -79,7 +81,7 @@ const Layout = () => {
         <Brand />
         <NavList />
         <div className="mt-auto rounded-md border border-dashed p-3 text-xs leading-relaxed text-muted-foreground">
-          本平台负责规则配置、发布、测试与审计。接入方运行时负责订阅飞书消息并执行任务。
+          平台自身监听飞书消息、调度并创建真实待办、发送结果通知。外部拉取 API 仅作为可选扩展。
         </div>
       </aside>
 

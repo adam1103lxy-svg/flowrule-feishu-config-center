@@ -27,26 +27,41 @@ export class IntegrationService {
     const schemaJson = JSON.stringify(PUBLISHED_CONFIG_JSON_SCHEMA, null, 2);
     return `# FlowRule 接入文档
 
-> 本文档由 FlowRule 飞书规则配置中心自动生成，用于接入方运行时对接已发布规则配置。
+> 本文档由 FlowRule 飞书规则配置中心自动生成，说明平台 SaaS 闭环运行方式与可选的外部接入扩展。
 
-## 0. 产品边界（必读）
+## 0. 运行方式（必读）
 
-FlowRule 是**配置与接入平台**，不是飞书任务执行器：
+FlowRule 以 SaaS 闭环方式运行：平台自身实时监听飞书群消息，按已发布规则在 run_at 到期时自动调用飞书 Task v2 创建待办、回读核验，并向结果通知群发送待办链接。运行 SaaS 闭环**无需任何外部部署**。
 
-- 接入方运行时负责：订阅飞书群消息、按周期拉取已发布规则、执行任务 API（如创建待办 / 发送通知）、回写执行结果；
-- 本平台负责：规则配置、版本发布、模拟测试、审计与配置下发。
+闭环步骤：
 
-本平台不保存真实飞书 Secret/Token：连接器仅记录非敏感凭证引用（\`credentialRef\`，如 \`secret-manager://team/feishu-prod\`）；真实凭据由接入方运行时的密钥体系托管，本平台也不直接调用飞书 OpenAPI 执行任务。
+1. 在连接中心配置飞书应用 App ID / App Secret，并通过配置检查（平台开始实时监听来源群消息）；
+2. 在规则列表配置并发布规则（来源群、负责人策略、执行时机、待办标题内容、结果通知群、去重键）；
+3. 平台在 run_at 到期时自动创建飞书待办（Task v2，幂等 client_token）并回读核验；
+4. 向结果通知群发送待办链接；
+5. 全部过程可在运行中心与审计中查看。
 
-## 1. 接入方式：当前 2 种可用 + 1 种扩展方案
+### 运行前提（飞书应用权限）
+
+飞书应用需开通以下能力（以飞书开放平台后台实际权限项为准）：
+
+- 接收群消息（用于实时监听来源群消息）；
+- 创建与读取待办 Task v2（用于创建待办与回读核验）；
+- 发送消息（用于向结果通知群发送待办链接）。
+
+在连接中心完成 App ID / App Secret 配置并通过配置检查后，闭环即开始运行。App Secret 只在服务端加密存储，界面与接口均不回显。
+
+## 1. 可选扩展 · 外部接入方式（2 种可用 + 1 种规划中）
+
+> 外部拉取 API 为可选扩展，运行 SaaS 闭环无需任何外部部署。以下方式供需要在自有系统中运行已发布规则的外部系统使用。
 
 | 方式 | 状态 | 说明 | 适用场景 |
 | --- | --- | --- | --- |
-| 配置拉取 API | ✅ 可用 | 运行时定期调用 \`GET /openapi/v1/published-config\` 获取全部已发布规则 | 主动轮询，实现最简单 |
-| 导出 JSON | ✅ 可用 | 登录用户在接入中心页面手动导出发布配置文件，随应用一起部署 | 离线部署 / 不允许出网 |
-| 发布 Webhook | ⛅ 扩展方案（当前未启用） | 规划能力：发布新版本后回调接入方注册的地址 | 准实时感知版本变化 |
+| 配置拉取 API | ✅ 可用 | 外部系统运行时定期调用 \`GET /openapi/v1/published-config\` 获取全部已发布规则 | 主动轮询，实现最简单 |
+| 导出 JSON | ✅ 可用 | 登录用户在接入中心页面手动导出发布配置文件，随外部系统一起部署 | 离线部署 / 不允许出网 |
+| 发布 Webhook | ⛅ 扩展方案（当前未启用） | 规划能力：发布新版本后回调外部系统注册的地址 | 准实时感知版本变化 |
 
-> 发布 Webhook 当前**未启用**：平台尚未实现主动投递，接入方请以轮询 \`/openapi/v1/published-config\` 为准，详见第 8 节。
+> 发布 Webhook 当前**未启用**：平台尚未实现主动投递，外部系统请以轮询 \`/openapi/v1/published-config\` 为准，详见第 8 节。
 
 ## 2. 配置拉取 API：GET /openapi/v1/published-config
 
@@ -151,7 +166,7 @@ curl -s -X POST "https://$FLOWRULE_BASE_URL/openapi/v1/simulate" \\
 
 ## 5. 统一事件输入与决策输出
 
-接入方把飞书消息事件转换为统一事件输入（与平台模拟测试台一致）：
+外部接入运行时把飞书消息事件转换为统一事件输入（与平台自身执行链路、模拟测试台一致）：
 
 \`\`\`json
 {
@@ -167,7 +182,7 @@ curl -s -X POST "https://$FLOWRULE_BASE_URL/openapi/v1/simulate" \\
 }
 \`\`\`
 
-接入方运行时按拉取到的规则配置在本地评估，决策输出字段与第 4 节 \`decision\` 一致（\`matched\`、\`assignees\`、\`objectKey\`、\`dueAt\`、\`dedupKey\`、\`notifyTargets\`、\`taskTitle\`、\`cancelMatched\` 等），是接入方执行任务动作的依据。
+外部接入运行时按拉取到的规则配置在本地评估，决策输出字段与第 4 节 \`decision\` 一致（\`matched\`、\`assignees\`、\`objectKey\`、\`dueAt\`、\`dedupKey\`、\`notifyTargets\`、\`taskTitle\`、\`cancelMatched\` 等），是外部系统执行任务动作的依据。
 
 ## 6. 鉴权（妙搭 Open API Key）
 
@@ -189,18 +204,18 @@ Authorization: Bearer <miaoda-open-api-key>
 | FLOWRULE_API_KEY | 妙达 Open API Key（Bearer 鉴权），由应用管理员在妙达平台创建 | 创建后自行填入（不内置示例值） |
 | FLOWRULE_BASE_URL | 本平台服务地址 | https://flowrule.example.com |
 | FLOWRULE_PULL_INTERVAL_SEC | 配置拉取周期（秒，建议 ≥ 连接器扫描周期） | 300 |
-| FLOWRULE_TASK_API_BASE | 接入方任务 API 基础地址 | https://tasks.example.com |
+| FLOWRULE_TASK_API_BASE | 外部任务系统 API 基础地址（仅可选扩展使用） | https://tasks.example.com |
 | FLOWRULE_WEBHOOK_SECRET | Webhook 签名密钥（扩展方案预留，当前未启用） | 创建后自行填入（不内置示例值） |
 
 ## 8. 扩展接入方案：发布 Webhook（当前未启用）
 
-> **当前状态**：平台尚未实现 Webhook 主动投递。接入方请通过轮询 \`/openapi/v1/published-config\`（比对 \`exportedAt\` 与各规则 \`version\`）感知版本变化。以下为规划中的方案设计，供接入方预留能力，不代表当前可用。
+> **当前状态**：平台尚未实现 Webhook 主动投递。外部系统请通过轮询 \`/openapi/v1/published-config\`（比对 \`exportedAt\` 与各规则 \`version\`）感知版本变化。以下为规划中的方案设计，供外部系统预留能力，不代表当前可用。
 
 启用后的设计（规划）：
 
-- 平台在规则发布后向接入方注册的 Webhook 地址 POST 事件体；
+- 平台在规则发布后向外部系统注册的 Webhook 地址 POST 事件体；
 - 请求头携带 \`X-FlowRule-Timestamp\` 与 \`X-FlowRule-Signature\`（HMAC-SHA256，密钥为 FLOWRULE_WEBHOOK_SECRET）；
-- 接入方校验时间戳偏差（建议 5 分钟内，防重放），对 \`timestamp + "." + rawBody\` 重算签名并常量时间比对；
+- 接收方校验时间戳偏差（建议 5 分钟内，防重放），对 \`timestamp + "." + rawBody\` 重算签名并常量时间比对；
 - 校验失败返回 401 并丢弃事件；成功后重新拉取配置（或使用事件体直接更新本地缓存）。
 
 \`\`\`json
@@ -247,7 +262,7 @@ function verify(rawBody, timestamp, signature) {
 
 - 拉取配置：失败后指数退避重试（1s → 2s → 4s，最多 3 次），连续失败保留上一次成功配置并告警；
 - 模拟测试（\`/openapi/v1/simulate\`）：确定性结果，失败按 4xx/5xx 区分处理，5xx 可重试；每次成功调用都会新增模拟记录，重试前请评估是否产生重复记录；
-- 任务执行（接入方侧）：按规则 \`retryCount\` 重试，仍失败按 \`failureAction\` 进入待确认或丢弃。
+- 任务执行（仅可选扩展，外部系统侧）：按规则 \`retryCount\` 重试，仍失败按 \`failureAction\` 进入待确认或丢弃。
 
 ## 12. 上线验收清单
 
