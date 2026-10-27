@@ -37,7 +37,7 @@ const RETRY_BASE_DELAY_MINUTES = 5;
 const ACTIVE_EXECUTING_STATUSES: TaskRunStatus[] = ['pending', 'notify_pending', 'failed'];
 type ExecutionContext =
   | { identity: 'app'; client: import('@larksuiteoapi/node-sdk').Client }
-  | { identity: 'user'; accessToken: string };
+  | { identity: 'user'; accessToken: string; userOpenId: string; userName: string };
 
 const toTaskRun = (
   row: typeof taskRun.$inferSelect,
@@ -323,6 +323,8 @@ export class TaskRunService {
         let accessToken = this.feishuClientService.resolveEncryptedValue(
           conn.userAccessTokenEnc,
         );
+        let userOpenId = conn.userOpenId;
+        let userName = conn.userName;
         if (!accessToken) throw new Error('尚未完成用户 OAuth 授权');
         if (!conn.userTokenExpiresAt || conn.userTokenExpiresAt.getTime() <= Date.now()) {
           const refreshToken = this.feishuClientService.resolveEncryptedValue(
@@ -334,6 +336,8 @@ export class TaskRunService {
             refreshToken,
           );
           accessToken = refreshed.accessToken;
+          userOpenId = refreshed.openId || userOpenId;
+          userName = refreshed.name || userName;
           await this.db
             .update(connector)
             .set({
@@ -345,13 +349,18 @@ export class TaskRunService {
               userRefreshExpiresAt: refreshed.refreshExpiresIn
                 ? new Date(Date.now() + refreshed.refreshExpiresIn * 1000)
                 : conn.userRefreshExpiresAt,
-              userOpenId: refreshed.openId || conn.userOpenId,
-              userName: refreshed.name || conn.userName,
+              userOpenId,
+              userName,
               updatedAt: new Date(),
             })
             .where(eq(connector.id, conn.id));
         }
-        return { identity: 'user', accessToken };
+        return {
+          identity: 'user',
+          accessToken,
+          userOpenId,
+          userName,
+        };
       } catch (error) {
         if (!conn.allowIdentityFallback) throw error;
         this.logger.warn(`用户身份不可用，按连接器配置回退应用身份: ${toMessage(error)}`);
@@ -466,8 +475,13 @@ export class TaskRunService {
       });
       return;
     }
+    const assigneeName = row.assigneeName
+      || (context.identity === 'user' && context.userOpenId === row.assigneeOpenId
+        ? context.userName
+        : '')
+      || '负责人';
     const assignee = row.assigneeOpenId
-      ? `<at user_id="${row.assigneeOpenId}">${row.assigneeName || '负责人'}</at>`
+      ? `<at user_id="${row.assigneeOpenId}">${assigneeName}</at>`
       : '未识别';
     const text = [
       '【FlowRule】飞书待办已创建',

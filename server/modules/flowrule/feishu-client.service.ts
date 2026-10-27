@@ -48,6 +48,11 @@ export interface UserOAuthToken {
   name: string;
 }
 
+interface UserInfoResponse {
+  open_id?: string;
+  name?: string;
+}
+
 interface TaskV2Member {
   id?: string;
   role?: string;
@@ -167,7 +172,7 @@ export class FeishuClientService {
     if (data.code !== 0 || typeof data.access_token !== 'string') {
       throw new Error(`用户身份授权失败 code=${String(data.code)} msg=${String(data.error_description ?? data.msg ?? '未知错误')}`);
     }
-    return {
+    const token = {
       accessToken: data.access_token,
       refreshToken: String(data.refresh_token ?? ''),
       expiresIn: Number(data.expires_in ?? 0),
@@ -175,6 +180,7 @@ export class FeishuClientService {
       openId: String(data.open_id ?? ''),
       name: String(data.name ?? ''),
     };
+    return this.enrichUserToken(token);
   }
 
   async refreshUserToken(
@@ -195,7 +201,7 @@ export class FeishuClientService {
     if (data.code !== 0 || typeof data.access_token !== 'string') {
       throw new Error(`用户身份刷新失败 code=${String(data.code)} msg=${String(data.error_description ?? data.msg ?? '未知错误')}`);
     }
-    return {
+    const token = {
       accessToken: data.access_token,
       refreshToken: String(data.refresh_token ?? refreshToken),
       expiresIn: Number(data.expires_in ?? 0),
@@ -203,6 +209,27 @@ export class FeishuClientService {
       openId: String(data.open_id ?? ''),
       name: String(data.name ?? ''),
     };
+    return this.enrichUserToken(token);
+  }
+
+  private async enrichUserToken(token: UserOAuthToken): Promise<UserOAuthToken> {
+    if (token.openId && token.name) return token;
+    try {
+      const resp = await axios.get(`${OPEN_API}/authen/v1/user_info`, {
+        headers: { Authorization: `Bearer ${token.accessToken}` },
+        timeout: 10_000,
+      });
+      const body = resp.data as { code?: number; data?: UserInfoResponse } & UserInfoResponse;
+      const info = body.data ?? body;
+      return {
+        ...token,
+        openId: token.openId || info.open_id || '',
+        name: token.name || info.name || '',
+      };
+    } catch (error) {
+      this.logger.warn(`用户身份信息读取失败，保留 token 返回字段: ${toMessage(error)}`);
+      return token;
+    }
   }
 
   async createTaskAsUser(
