@@ -123,6 +123,11 @@ export const normalizeRuleConfig = (raw: unknown): RuleConfig => {
             typeof extractionRaw.releaseRatioPattern === 'string'
               ? extractionRaw.releaseRatioPattern
               : undefined,
+          splitMode: typeof extractionRaw.splitMode === 'string'
+            ? extractionRaw.splitMode as 'none' | 'line' | 'paragraph' | 'regex'
+            : 'none',
+          splitPattern: typeof extractionRaw.splitPattern === 'string'
+            ? extractionRaw.splitPattern : undefined,
         }
       : null,
     assignee: assigneeRaw
@@ -141,6 +146,8 @@ export const normalizeRuleConfig = (raw: unknown): RuleConfig => {
             typeof assigneeRaw.fallback === 'string'
               ? assigneeRaw.fallback
               : undefined,
+          multiMode: assigneeRaw.multiMode === 'one_per_assignee'
+            ? 'one_per_assignee' : 'single_task',
         }
       : null,
     timing: asTiming(src.timing),
@@ -162,6 +169,10 @@ export const normalizeRuleConfig = (raw: unknown): RuleConfig => {
       | 'pending_confirm'
       | 'drop',
     retryCount: asNumber(src.retryCount, 0),
+    contextMode: src.contextMode === 'root' || src.contextMode === 'thread'
+      ? src.contextMode : 'current',
+    contextDepth: Math.max(1, Math.min(20, asNumber(src.contextDepth, 5))),
+    allowSourceGroupNotification: src.allowSourceGroupNotification === true,
   };
 };
 
@@ -331,6 +342,40 @@ const computeRunAt = (
   return { runAt: sentAt, detail: `立即执行，run_at = 消息时间 ${sentAt.toISOString()}` };
 };
 
+const parseDueFromMessage = (text: string, base: Date, timezone: string): Date | null => {
+  const explicit = text.match(/(?:截止|到期)\s*[：:]?\s*(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})日?(?:\s*(上午|下午|晚上|早上|中午)?\s*(\d{1,2})(?:[:.点时](\d{1,2}))?分?)?/u);
+  if (explicit) {
+    let hour = Number(explicit[5] ?? 18);
+    const minute = Number(explicit[6] ?? 0);
+    if (/下午|晚上/u.test(explicit[4] ?? '') && hour < 12) hour += 12;
+    if (hour > 23 || minute > 59) return null;
+    const wall = new Date(Date.UTC(Number(explicit[1]), Number(explicit[2]) - 1, Number(explicit[3]), hour, minute));
+    return new Date(wall.getTime() - getTimezoneOffsetMs(wall, timezone));
+  }
+  const monthDay = text.match(/(?:截止|到期)\s*[：:]?\s*(\d{1,2})月(\d{1,2})日?(?:\s*(上午|下午|晚上|早上|中午)?\s*(\d{1,2})(?:[:.点时](\d{1,2}))?分?)?/u);
+  if (monthDay) {
+    const offset = getTimezoneOffsetMs(base, timezone);
+    const baseWall = new Date(base.getTime() + offset);
+    let hour = Number(monthDay[4] ?? 18); const minute = Number(monthDay[5] ?? 0);
+    if (/下午|晚上/u.test(monthDay[3] ?? '') && hour < 12) hour += 12;
+    if (hour > 23 || minute > 59) return null;
+    const wall = new Date(Date.UTC(baseWall.getUTCFullYear(), Number(monthDay[1]) - 1, Number(monthDay[2]), hour, minute));
+    if (wall.getTime() < baseWall.getTime()) wall.setUTCFullYear(wall.getUTCFullYear() + 1);
+    return new Date(wall.getTime() - offset);
+  }
+  const relative = text.match(/(?:截止|到期)\s*[：:]?\s*(今天|明天|后天)(?:\s*(上午|下午|晚上|早上|中午)?\s*(\d{1,2})(?:[:.点时](\d{1,2}))?分?)?/u);
+  if (!relative) return null;
+  const offset = getTimezoneOffsetMs(base, timezone);
+  const wall = new Date(base.getTime() + offset);
+  wall.setUTCDate(wall.getUTCDate() + ['今天', '明天', '后天'].indexOf(relative[1]));
+  let hour = Number(relative[3] ?? 18);
+  const minute = Number(relative[4] ?? 0);
+  if (/下午|晚上/u.test(relative[2] ?? '') && hour < 12) hour += 12;
+  if (hour > 23 || minute > 59) return null;
+  wall.setUTCHours(hour, minute, 0, 0);
+  return new Date(wall.getTime() - offset);
+};
+
 /* ===== 模板渲染 ===== */
 
 const renderTemplate = (
@@ -352,6 +397,7 @@ export const simulateRule = (
   timezone: string,
 ): SimulationResult => {
   const config = rule.config;
+  const extractionText = input.contextText?.trim() || input.messageText;
   const trace: SimulationTraceStep[] = [];
   const sentAt = new Date(input.sentAt);
 
@@ -436,11 +482,11 @@ export const simulateRule = (
 
   const extraction = extractByPattern(
     config.extraction?.objectPattern ?? '',
-    input.messageText,
+    extractionText,
   );
   const version = extractByPattern(
     config.extraction?.versionPattern ?? '',
-    input.messageText,
+    extractionText,
   );
   const objectKey = matched ? extraction.value : '';
   trace.push({
@@ -456,7 +502,7 @@ export const simulateRule = (
 
   const ratio = extractByPattern(
     config.extraction?.releaseRatioPattern ?? '',
-    input.messageText,
+    extractionText,
   );
   if (matched && (config.extraction?.releaseRatioPattern ?? '') !== '') {
     trace.push({
@@ -519,6 +565,8 @@ export const simulateRule = (
         { mode: 'fixed_next_day', fixedTime: config.dueAt.fixedTime ?? '09:00' },
         timezone,
       ).runAt;
+    } else if (config.dueAt.mode === 'from_message') {
+      dueAt = parseDueFromMessage(extractionText, sentAt, timezone);
     }
   }
   if (matched) {
@@ -617,6 +665,26 @@ export const simulateRule = (
   };
 };
 
+export const splitRuleInput = (config: RuleConfig, input: SimulationInput): SimulationInput[] => {
+  const mode = config.extraction?.splitMode ?? 'none';
+  const source = input.contextText?.trim() || input.messageText;
+  if (mode === 'none' || !source) return [input];
+  let parts: string[];
+  if (mode === 'line') parts = source.split(/\r?\n/u);
+  else if (mode === 'paragraph') parts = source.split(/(?:\r?\n){2,}/u);
+  else {
+    try { parts = source.split(new RegExp(config.extraction?.splitPattern || '(?=【)', 'u')); }
+    catch { return [input]; }
+  }
+  const cleaned = parts.map((part) => part.trim()).filter(Boolean);
+  return cleaned.length
+    ? cleaned.map((part) => ({ ...input, messageText: `${input.messageText}\n${part}`, contextText: part }))
+    : [input];
+};
+
+export const simulateRuleBatch = (rule: Rule, input: SimulationInput, timezone: string): SimulationResult[] =>
+  splitRuleInput(rule.config, input).map((part) => simulateRule(rule, part, timezone));
+
 /* ===== 发布校验 ===== */
 
 export const validateRuleConfig = (config: RuleConfig): ValidationResult => {
@@ -628,9 +696,14 @@ export const validateRuleConfig = (config: RuleConfig): ValidationResult => {
   if (
     config.sourceChatId.trim() &&
     config.notifyChatId.trim() &&
-    config.notifyChatId === config.sourceChatId
+    config.notifyChatId === config.sourceChatId &&
+    !config.allowSourceGroupNotification
   )
     issues.push('通知群不能与来源群相同：来源群只读，平台严禁向来源群发送任何消息');
+  if (config.extraction?.splitMode === 'regex' && config.extraction.splitPattern) {
+    try { new RegExp(config.extraction.splitPattern); }
+    catch { issues.push(`多对象分段正则无效：${config.extraction.splitPattern}`); }
+  }
   if (config.trigger.conditions.length === 0) issues.push('缺少触发条件');
   if (!config.assignee) issues.push('缺少负责人策略');
   if (config.notifyTargets.length === 0) issues.push('缺少通知目标');

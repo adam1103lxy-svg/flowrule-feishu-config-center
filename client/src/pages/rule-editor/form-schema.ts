@@ -111,6 +111,8 @@ export const ruleFormSchema = z
       objectPattern: z.string(),
       versionPattern: z.string(),
       releaseRatioPattern: z.string(),
+      splitMode: z.enum(['none', 'line', 'paragraph', 'regex']),
+      splitPattern: z.string(),
     }),
     assigneeMode: z.enum([
       'none',
@@ -128,6 +130,7 @@ export const ruleFormSchema = z
       }),
     ),
     assigneeFallback: z.string(),
+    multiAssigneeMode: z.enum(['single_task', 'one_per_assignee']),
     timingMode: z.enum(TIMING_MODES),
     delayMinutes: z
       .number({ message: '请输入有效数字' })
@@ -139,6 +142,9 @@ export const ruleFormSchema = z
       .string()
       .refine((v: string) => v === '' || /^\d+$/u.test(v), '请输入有效数字'),
     dueAtFixedTime: z.string(),
+    contextMode: z.enum(['current', 'root', 'thread']),
+    contextDepth: z.number().int().min(1).max(20),
+    allowSourceGroupNotification: z.boolean(),
     taskTitleTemplate: z.string().min(1, '请输入待办标题模板'),
     taskDescTemplate: z.string(),
     dedupFields: z.array(z.enum(DEDUP_FIELDS)),
@@ -190,6 +196,9 @@ export const ruleFormSchema = z
           message: '正则无效',
           path: ['extraction', 'releaseRatioPattern'],
         });
+      }
+      if (data.extraction.splitMode === 'regex' && !isValidRegex(data.extraction.splitPattern)) {
+        ctx.addIssue({ code: 'custom', message: '请输入有效的分段正则', path: ['extraction', 'splitPattern'] });
       }
     }
     if (data.assigneeMode === 'static' && data.staticUsers.length === 0) {
@@ -300,17 +309,23 @@ export const createDefaultFormValues = (): RuleFormValues => ({
     objectPattern: '',
     versionPattern: '',
     releaseRatioPattern: '',
+    splitMode: 'none',
+    splitPattern: '(?=【)',
   },
   assigneeMode: 'mention_first_else_sender',
   staticUsers: [],
   externalMap: [{ key: '', user: '' }],
   assigneeFallback: '',
+  multiAssigneeMode: 'single_task',
   timingMode: 'immediate',
   delayMinutes: 30,
   fixedTime: '09:00',
   dueAtMode: 'none',
   dueAtDelayMinutes: '30',
   dueAtFixedTime: '18:00',
+  contextMode: 'current',
+  contextDepth: 5,
+  allowSourceGroupNotification: false,
   taskTitleTemplate: '{{rule_name}}',
   taskDescTemplate: '',
   dedupFields: [],
@@ -365,6 +380,8 @@ export const buildFormValues = (rule: Rule): RuleFormValues => ({
     objectPattern: rule.config.extraction?.objectPattern ?? '',
     versionPattern: rule.config.extraction?.versionPattern ?? '',
     releaseRatioPattern: rule.config.extraction?.releaseRatioPattern ?? '',
+    splitMode: rule.config.extraction?.splitMode ?? 'none',
+    splitPattern: rule.config.extraction?.splitPattern ?? '(?=【)',
   },
   assigneeMode: rule.config.assignee?.mode ?? 'mention_first_else_sender',
   staticUsers: rule.config.assignee?.staticUsers ?? [],
@@ -373,6 +390,7 @@ export const buildFormValues = (rule: Rule): RuleFormValues => ({
       ? rule.config.assignee.externalMap.map((row) => ({ key: row.key, user: row.user }))
       : [{ key: '', user: '' }],
   assigneeFallback: rule.config.assignee?.fallback ?? '',
+  multiAssigneeMode: rule.config.assignee?.multiMode ?? 'single_task',
   timingMode: rule.config.timing?.mode ?? 'immediate',
   delayMinutes: rule.config.timing?.delayMinutes ?? 30,
   fixedTime: rule.config.timing?.fixedTime ?? '09:00',
@@ -382,6 +400,9 @@ export const buildFormValues = (rule: Rule): RuleFormValues => ({
       ? String(rule.config.dueAt.delayMinutes)
       : '30',
   dueAtFixedTime: rule.config.dueAt?.fixedTime ?? '18:00',
+  contextMode: rule.config.contextMode ?? 'current',
+  contextDepth: rule.config.contextDepth ?? 5,
+  allowSourceGroupNotification: rule.config.allowSourceGroupNotification ?? false,
   taskTitleTemplate: rule.config.taskTitleTemplate ?? '',
   taskDescTemplate: rule.config.taskDescTemplate ?? '',
   dedupFields: rule.config.dedupFields ?? [],
@@ -420,6 +441,7 @@ export const buildRuleConfig = (data: RuleFormValues): RuleConfig => {
           ...(data.assigneeFallback.trim()
             ? { fallback: data.assigneeFallback.trim() }
             : {}),
+          multiMode: data.multiAssigneeMode,
         };
 
   const timing = {
@@ -478,6 +500,10 @@ export const buildRuleConfig = (data: RuleFormValues): RuleConfig => {
           ...(data.extraction.releaseRatioPattern.trim()
             ? { releaseRatioPattern: data.extraction.releaseRatioPattern.trim() }
             : {}),
+          splitMode: data.extraction.splitMode,
+          ...(data.extraction.splitMode === 'regex'
+            ? { splitPattern: data.extraction.splitPattern }
+            : {}),
         }
       : null,
     assignee,
@@ -491,5 +517,8 @@ export const buildRuleConfig = (data: RuleFormValues): RuleConfig => {
     cancelScope: data.cancelScope as (typeof CANCEL_SCOPES)[number],
     failureAction: data.failureAction as (typeof FAILURE_ACTIONS)[number],
     retryCount: data.retryCount,
+    contextMode: data.contextMode,
+    contextDepth: data.contextDepth,
+    allowSourceGroupNotification: data.allowSourceGroupNotification,
   };
 };

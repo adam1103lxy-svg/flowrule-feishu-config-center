@@ -10,6 +10,7 @@ import {
 } from '@client/src/components/ui/form';
 import { Button } from '@client/src/components/ui/button';
 import { Input } from '@client/src/components/ui/input';
+import { Switch } from '@client/src/components/ui/switch';
 import {
   Select,
   SelectContent,
@@ -236,6 +237,13 @@ export const NotifyChatSection = ({
       {chatName ? (
         <p className="text-sm text-muted-foreground">已选群：{chatName}</p>
       ) : null}
+      <FormField control={form.control} name="allowSourceGroupNotification" render={({ field }) => (
+        <FormItem className="flex items-start gap-3 rounded-md border border-border p-3">
+          <FormControl><Switch checked={field.value} onCheckedChange={field.onChange} aria-label="允许通知回来源群" /></FormControl>
+          <div><FormLabel className="!mt-0">允许通知回来源群</FormLabel>
+            <FormDescription>默认关闭。仅用于已确认可回写的规则；开启后发布和执行均会记录审计。</FormDescription></div>
+        </FormItem>
+      )} />
     </SectionCard>
   );
 };

@@ -18,7 +18,7 @@ import {
   type SQL,
 } from 'drizzle-orm';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
-import { connector, taskRun } from '@server/database/schema';
+import { connector, rule, taskRun } from '@server/database/schema';
 import type {
   TaskRun,
   TaskRunListQuery,
@@ -457,6 +457,14 @@ export class TaskRunService {
   ): Promise<void> {
     if (row.notifyChatId === '') return;
     if (row.notifyChatId === row.sourceChatId) {
+      const [sourceRule] = await this.db.select({ config: rule.config }).from(rule).where(eq(rule.id, row.ruleId));
+      const config = sourceRule ? JSON.parse(sourceRule.config) as { allowSourceGroupNotification?: boolean } : null;
+      if (config?.allowSourceGroupNotification === true) {
+        await this.auditService.write({
+          action: 'task_notified', entityType: 'task_run', entityId: row.id, entityName: row.taskTitle,
+          summary: `规则已显式允许向来源群「${row.sourceChatName || row.sourceChatId}」发送结果通知`,
+        });
+      } else {
       await this.db
         .update(taskRun)
         .set({
@@ -474,6 +482,7 @@ export class TaskRunService {
         summary: `已拦截向来源群「${row.sourceChatName || row.sourceChatId}」发送结果通知：来源群只读`,
       });
       return;
+      }
     }
     const assigneeName = row.assigneeName
       || (context.identity === 'user' && context.userOpenId === row.assigneeOpenId

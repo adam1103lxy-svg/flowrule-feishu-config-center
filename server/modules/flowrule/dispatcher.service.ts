@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { and, eq, lt } from 'drizzle-orm';
+import { and, asc, eq, lt, or } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
 import { connector, messageEvent, rule, taskRun } from '@server/database/schema';
@@ -12,7 +12,7 @@ import type {
   SimulationResult,
   SenderRole,
 } from '@shared/api.interface';
-import { normalizeRuleConfig, simulateRule } from './engine';
+import { normalizeRuleConfig, simulateRuleBatch } from './engine';
 import { AuditService } from './audit.service';
 import { TaskRunService } from './task-run.service';
 
@@ -106,7 +106,7 @@ export class DispatcherService {
         messageType: message.message_type,
         contentText: text,
         mentions: JSON.stringify(mentionPairs),
-        rootId: message.root_id ?? '',
+        rootId: message.root_id ?? message.parent_id ?? '',
         replyDepth,
         sentAt,
         processed: false,
@@ -159,7 +159,7 @@ export class DispatcherService {
         mentionPairs = [];
       }
       const mentions = mentionPairs.map((p) => p.openId);
-      const input: SimulationInput = {
+      const baseInput: SimulationInput = {
         messageText: event.contentText,
         sender: event.senderOpenId,
         senderRole: 'member' as SenderRole,
@@ -181,28 +181,21 @@ export class DispatcherService {
       for (const pair of mentionPairs) mentionNameMap[pair.openId] = pair.name;
       for (const ruleRow of boundRules) {
         const config = normalizeRuleConfig(JSON.parse(ruleRow.config));
-        const result = simulateRule(this.toSimRule(ruleRow), input, timezone);
-        if (result.cancelMatched) {
-          await this.taskRunService.cancelMatching(
-            ruleRow.id,
-            result.extractedObjectKey,
-            config.cancelScope,
-            SYSTEM_USER,
-          );
-          continue;
+        const input = await this.withContext(baseInput, event, config);
+        const results = simulateRuleBatch(this.toSimRule(ruleRow), input, timezone);
+        for (const result of results) {
+          if (result.cancelMatched) {
+            await this.taskRunService.cancelMatching(ruleRow.id, result.extractedObjectKey, config.cancelScope, SYSTEM_USER);
+            continue;
+          }
+          if (!result.matched || result.excluded) continue;
+          const assignees = config.assignee?.multiMode === 'one_per_assignee'
+            ? [...new Set(result.assignees)] : [result.assignees[0] ?? ''];
+          for (const assigneeOpenId of assignees) {
+            await this.scheduleRun({ ruleRow, config, connectionId, result, assigneeOpenId,
+              chatId, chatName, messageId: event.messageId, messageEventId: event.id, mentionNameMap });
+          }
         }
-        if (!result.matched || result.excluded) continue;
-        await this.scheduleRun({
-          ruleRow,
-          config,
-          connectionId,
-          result,
-          chatId,
-          chatName,
-          messageId: event.messageId,
-          messageEventId: event.id,
-          mentionNameMap,
-        });
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -216,6 +209,23 @@ export class DispatcherService {
         .set({ processed: true, updatedAt: new Date() })
         .where(eq(messageEvent.id, event.id));
     }
+  }
+
+  private async withContext(
+    input: SimulationInput,
+    event: typeof messageEvent.$inferSelect,
+    config: RuleConfig,
+  ): Promise<SimulationInput> {
+    if (config.contextMode === 'current' || event.rootId === '') return input;
+    const rows = await this.db.select().from(messageEvent)
+      .where(and(
+        eq(messageEvent.connectionId, event.connectionId),
+        or(eq(messageEvent.messageId, event.rootId), eq(messageEvent.rootId, event.rootId)),
+      ))
+      .orderBy(asc(messageEvent.sentAt))
+      .limit(config.contextMode === 'root' ? 1 : (config.contextDepth ?? 5));
+    const contextText = rows.map((row) => row.contentText).filter(Boolean).join('\n');
+    return { ...input, contextText: contextText || input.messageText };
   }
 
   private toSimRule(row: typeof rule.$inferSelect): Rule {
@@ -265,6 +275,7 @@ export class DispatcherService {
     config: RuleConfig;
     connectionId: string;
     result: SimulationResult;
+    assigneeOpenId: string;
     chatId: string;
     chatName: string;
     messageId: string;
@@ -272,7 +283,7 @@ export class DispatcherService {
     mentionNameMap: Record<string, string>;
   }): Promise<boolean> {
     const { ruleRow, config, result, mentionNameMap } = args;
-    const assigneeOpenIdRaw = result.assignees[0] ?? '';
+    const assigneeOpenIdRaw = args.assigneeOpenId;
     const assigneeMode = config.assignee?.mode ?? '';
     const usableModes = ['mention', 'sender', 'mention_first_else_sender'];
     const hasUsableAssignee =
@@ -280,8 +291,9 @@ export class DispatcherService {
     const assigneeOpenId = hasUsableAssignee ? assigneeOpenIdRaw : '';
     const assigneeName = mentionNameMap[assigneeOpenId] ?? '';
     const dueAt = result.dueAt !== '' ? new Date(result.dueAt) : null;
-    const sourceReadOnlyViolation =
-      config.notifyChatId !== '' && config.notifyChatId === args.chatId;
+    const sourceReadOnlyViolation = config.notifyChatId !== ''
+      && config.notifyChatId === args.chatId
+      && !config.allowSourceGroupNotification;
     const [inserted] = await this.db
       .insert(taskRun)
       .values({
@@ -293,7 +305,8 @@ export class DispatcherService {
         messageId: args.messageId,
         status:
           sourceReadOnlyViolation || !hasUsableAssignee ? 'needs_review' : 'pending',
-        dedupKey: result.dedupKey,
+        dedupKey: config.assignee?.multiMode === 'one_per_assignee'
+          ? `${result.dedupKey}:${assigneeOpenId}` : result.dedupKey,
         clientToken: randomUUID(),
         assigneeOpenId,
         assigneeName,

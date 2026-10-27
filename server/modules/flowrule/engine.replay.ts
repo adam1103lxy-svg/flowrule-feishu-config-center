@@ -1,6 +1,6 @@
 /* eslint-disable no-console */
 import type { Rule, RuleConfig, SimulationInput } from '@shared/api.interface';
-import { normalizeRuleConfig, simulateRule, validateRuleConfig } from './engine';
+import { normalizeRuleConfig, simulateRule, simulateRuleBatch, validateRuleConfig } from './engine';
 
 let failures = 0;
 const check = (name: string, actual: unknown, expected: unknown): void => {
@@ -227,6 +227,54 @@ const replay2 = simulateRule(
 );
 check('回放确定性·去重键', replay1.dedupKey === replay2.dedupKey, true);
 check('回放确定性·run_at', replay1.runAt === replay2.runAt, true);
+
+// P0：一条消息按段落拆成多个业务对象
+const multiObject = simulateRuleBatch(
+  baseRule({ extraction: {
+    objectPattern: '应用[:：]\\s*([A-Za-z0-9-]+)',
+    versionPattern: '版本[:：]\\s*(v\\d+\\.\\d+\\.\\d+)',
+    splitMode: 'paragraph',
+  } }),
+  input({ messageText: '实际发布\n应用：Alpha 版本：v1.0.0\n\n实际发布\n应用：Beta 版本：v2.0.0' }),
+  'Asia/Shanghai',
+);
+check('P0·多对象拆分数量', multiObject.length, 2);
+check('P0·多对象独立提取', multiObject.map((r) => r.extractedObjectKey), ['Alpha', 'Beta']);
+
+// P0：多人分别建任务由引擎保留完整负责人列表，调度器逐人落库
+const multiAssignee = simulateRule(
+  baseRule({ assignee: { mode: 'mention', multiMode: 'one_per_assignee' } }),
+  input({ messageText: '实际发布 应用：Alpha 版本：v1.0.0', mentions: ['ou_a', 'ou_b'] }),
+  'Asia/Shanghai',
+);
+check('P0·保留全部负责人', multiAssignee.assignees, ['ou_a', 'ou_b']);
+
+// P0：触发看当前消息，字段可从回复链上下文补齐
+const contextExtraction = simulateRule(
+  baseRule({}),
+  input({ messageText: '实际发布', contextText: '应用：ContextApp 版本：v3.2.1 发布比例：100%' }),
+  'Asia/Shanghai',
+);
+check('P0·回复链补业务对象', contextExtraction.extractedObjectKey, 'ContextApp');
+check('P0·回复链补版本', contextExtraction.extractedObjectVersion, 'v3.2.1');
+
+// P0：从消息识别明确截止时间
+const dynamicDue = simulateRule(
+  baseRule({ dueAt: { mode: 'from_message' } }),
+  input({ messageText: '实际发布 应用：Alpha 版本：v1.0.0 截止2026-10-03 18:30' }),
+  'Asia/Shanghai',
+);
+check('P0·动态截止时间', dynamicDue.dueAt, '2026-10-03T10:30:00.000Z');
+
+// P0：来源群通知默认阻断，规则显式授权后放行
+const sourceNotifyBlocked = validateRuleConfig(normalizeRuleConfig({
+  ...baseRule({}).config, notifyChatId: 'oc_swift_prod', notifyChatName: 'Swift-产品',
+}));
+check('P0·来源群通知默认阻断', sourceNotifyBlocked.passed, false);
+const sourceNotifyAllowed = validateRuleConfig(normalizeRuleConfig({
+  ...baseRule({}).config, notifyChatId: 'oc_swift_prod', notifyChatName: 'Swift-产品', allowSourceGroupNotification: true,
+}));
+check('P0·来源群通知显式放行', sourceNotifyAllowed.passed, true);
 
 if (failures > 0) {
   console.error(`\n${failures} 个用例失败`);

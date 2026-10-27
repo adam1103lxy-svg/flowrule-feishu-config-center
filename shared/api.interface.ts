@@ -124,12 +124,31 @@ export const TIMING_MODE_LABELS: Record<TimingMode, string> = {
   fixed_next_day: '固定次日时间',
 };
 
-export const DUE_POLICY_MODES = ['none', 'relative_minutes', 'fixed_next_day'] as const;
+export const DUE_POLICY_MODES = ['none', 'relative_minutes', 'fixed_next_day', 'from_message'] as const;
 export type DuePolicyMode = (typeof DUE_POLICY_MODES)[number];
 export const DUE_POLICY_MODE_LABELS: Record<DuePolicyMode, string> = {
   none: '不设置截止时间',
   relative_minutes: '创建后相对延迟',
   fixed_next_day: '固定次日时间',
+  from_message: '从消息正文识别',
+};
+
+export const SPLIT_MODES = ['none', 'line', 'paragraph', 'regex'] as const;
+export type SplitMode = (typeof SPLIT_MODES)[number];
+export const SPLIT_MODE_LABELS: Record<SplitMode, string> = {
+  none: '不拆分', line: '按行拆分', paragraph: '按段落拆分', regex: '按正则分段',
+};
+
+export const CONTEXT_MODES = ['current', 'root', 'thread'] as const;
+export type ContextMode = (typeof CONTEXT_MODES)[number];
+export const CONTEXT_MODE_LABELS: Record<ContextMode, string> = {
+  current: '仅当前消息', root: '当前消息 + 根消息', thread: '当前消息 + 回复链',
+};
+
+export const MULTI_ASSIGNEE_MODES = ['single_task', 'one_per_assignee'] as const;
+export type MultiAssigneeMode = (typeof MULTI_ASSIGNEE_MODES)[number];
+export const MULTI_ASSIGNEE_MODE_LABELS: Record<MultiAssigneeMode, string> = {
+  single_task: '仅使用第一位负责人', one_per_assignee: '每位负责人分别创建一条待办',
 };
 
 export const RULE_ACTIONS = ['create_task'] as const;
@@ -281,6 +300,8 @@ export interface ExtractionConfig {
   objectPattern: string;
   versionPattern?: string;
   releaseRatioPattern?: string;
+  splitMode?: SplitMode;
+  splitPattern?: string;
 }
 
 export interface AllowedSender {
@@ -299,6 +320,7 @@ export interface AssigneeStrategy {
   staticUsers?: string[];
   externalMap?: { key: string; user: string }[];
   fallback?: string;
+  multiMode?: MultiAssigneeMode;
 }
 
 export interface TimingConfig {
@@ -335,6 +357,9 @@ export interface RuleConfig {
   cancelScope: CancelScope;
   failureAction: FailureAction;
   retryCount: number;
+  contextMode?: ContextMode;
+  contextDepth?: number;
+  allowSourceGroupNotification?: boolean;
 }
 
 /* ===== 实体 ===== */
@@ -473,6 +498,7 @@ export interface PublishResult {
 
 export interface SimulationInput {
   messageText: string;
+  contextText?: string;
   sender: string;
   senderRole: SenderRole;
   mentions: string[];

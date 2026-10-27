@@ -23,6 +23,12 @@ import SectionCard from '../components/section-card';
 import type { RuleForm } from './basics-section';
 import {
   ASSIGNER_MODE_LABELS,
+  CONTEXT_MODE_LABELS,
+  CONTEXT_MODES,
+  MULTI_ASSIGNEE_MODE_LABELS,
+  MULTI_ASSIGNEE_MODES,
+  SPLIT_MODE_LABELS,
+  SPLIT_MODES,
   TIMING_MODE_LABELS,
   TIMING_MODES,
 } from '@shared/api.interface';
@@ -57,6 +63,17 @@ export const ExtractionSection = ({ form }: SectionProps) => {
       />
       {enabled ? (
         <>
+          <FormField control={form.control} name="extraction.splitMode" render={({ field }) => (
+            <FormItem className="w-full sm:w-[280px]"><FormLabel>多对象拆分</FormLabel>
+              <Select onValueChange={field.onChange} value={field.value}><FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl>
+                <SelectContent>{SPLIT_MODES.map((m) => <SelectItem key={m} value={m}>{SPLIT_MODE_LABELS[m]}</SelectItem>)}</SelectContent>
+              </Select><FormDescription>一条消息包含多个对象时，先拆分再逐项提取并建待办。</FormDescription><FormMessage /></FormItem>
+          )} />
+          {form.watch('extraction.splitMode') === 'regex' ? (
+            <FormField control={form.control} name="extraction.splitPattern" render={({ field }) => (
+              <FormItem><FormLabel>分段正则</FormLabel><FormControl><Input placeholder="如：(?=【)" {...field} /></FormControl><FormMessage /></FormItem>
+            )} />
+          ) : null}
           <FormField
             control={form.control}
             name="extraction.objectLabel"
@@ -294,7 +311,12 @@ export const AssigneeSection = ({ form }: SectionProps) => {
       ) : null}
 
       {mode !== 'none' ? (
-        <FormField
+        <><FormField control={form.control} name="multiAssigneeMode" render={({ field }) => (
+          <FormItem className="w-full sm:w-[320px]"><FormLabel>多人处理方式</FormLabel>
+            <Select onValueChange={field.onChange} value={field.value}><FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl>
+              <SelectContent>{MULTI_ASSIGNEE_MODES.map((m) => <SelectItem key={m} value={m}>{MULTI_ASSIGNEE_MODE_LABELS[m]}</SelectItem>)}</SelectContent>
+            </Select><FormMessage /></FormItem>
+        )} /><FormField
           control={form.control}
           name="assigneeFallback"
           render={({ field }) => (
@@ -306,7 +328,7 @@ export const AssigneeSection = ({ form }: SectionProps) => {
               <FormMessage />
             </FormItem>
           )}
-        />
+        /></>
       ) : (
         <p className="text-sm text-muted-foreground">
           未配置负责人策略，发布校验会被阻断。
@@ -324,6 +346,16 @@ export const TimingSection = ({ form }: SectionProps) => {
       title="执行时机"
       description="规则命中后何时创建任务。"
     >
+      <div className="grid gap-4 sm:grid-cols-2">
+        <FormField control={form.control} name="contextMode" render={({ field }) => (
+          <FormItem><FormLabel>消息上下文</FormLabel><Select onValueChange={field.onChange} value={field.value}>
+            <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl><SelectContent>{CONTEXT_MODES.map((m) => <SelectItem key={m} value={m}>{CONTEXT_MODE_LABELS[m]}</SelectItem>)}</SelectContent>
+          </Select><FormDescription>触发仍以当前消息为准，字段提取可读取根消息或回复链。</FormDescription><FormMessage /></FormItem>
+        )} />
+        {form.watch('contextMode') === 'thread' ? <FormField control={form.control} name="contextDepth" render={({ field }) => (
+          <FormItem><FormLabel>最多读取消息数</FormLabel><FormControl><Input type="number" min={1} max={20} {...field} onChange={(e) => field.onChange(Number(e.target.value))} /></FormControl><FormMessage /></FormItem>
+        )} /> : null}
+      </div>
       <FormField
         control={form.control}
         name="timingMode"
