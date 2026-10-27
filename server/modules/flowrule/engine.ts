@@ -63,6 +63,7 @@ const asGroup = (v: unknown): RuleConditionGroup => {
         senderRole: typeof c.senderRole === 'string' ? (c.senderRole as RuleCondition['senderRole']) : undefined,
         messageType: typeof c.messageType === 'string' ? (c.messageType as RuleCondition['messageType']) : undefined,
         replyDepth: typeof c.replyDepth === 'number' ? c.replyDepth : undefined,
+        mentionIds: Array.isArray(c.mentionIds) ? asStringArray(c.mentionIds) : undefined,
       })),
   };
 };
@@ -173,6 +174,8 @@ export const normalizeRuleConfig = (raw: unknown): RuleConfig => {
       ? src.contextMode : 'current',
     contextDepth: Math.max(1, Math.min(20, asNumber(src.contextDepth, 5))),
     allowSourceGroupNotification: src.allowSourceGroupNotification === true,
+    executionMode: src.executionMode === 'shadow' ? 'shadow' : 'live',
+    sensitivePatterns: asStringArray(src.sensitivePatterns),
   };
 };
 
@@ -251,13 +254,18 @@ const evaluateCondition = (
       };
     }
     case 'must_mention': {
-      const passed = input.mentions.length > 0;
+      const required = cond.mentionIds ?? [];
+      const passed = required.length > 0
+        ? required.every((id) => input.mentions.includes(id))
+        : input.mentions.length > 0;
       return {
         label,
         passed,
-        detail: passed
-          ? `消息 @ 了 ${input.mentions.join('、')}`
-          : '消息未 @ 任何成员',
+        detail: required.length > 0
+          ? passed
+            ? `消息已 @ 指定人员：${required.join('、')}`
+            : `消息缺少指定 @：${required.filter((id) => !input.mentions.includes(id)).join('、')}`
+          : passed ? `消息 @ 了 ${input.mentions.join('、')}` : '消息未 @ 任何成员',
       };
     }
     case 'message_type': {

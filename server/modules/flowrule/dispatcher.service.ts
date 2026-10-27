@@ -73,6 +73,14 @@ const extractTextFromContent = (
 
 const looksLikeOpenId = (value: string): boolean => value.startsWith('ou_');
 
+const redactSensitiveText = (text: string): string => {
+  const patterns = [
+    /\b(?:token|access[_ -]?token|fb[_ -]?token|secret|password)\s*[：:=]\s*\S+/giu,
+    /\bEA[A-Za-z0-9_-]{16,}\b/gu,
+  ];
+  return patterns.reduce((value, pattern) => value.replace(pattern, '[敏感字段已脱敏]'), text);
+};
+
 @Injectable()
 export class DispatcherService {
   private readonly logger = new Logger(DispatcherService.name);
@@ -104,7 +112,7 @@ export class DispatcherService {
         chatName: '',
         senderOpenId: data.sender?.sender_id?.open_id ?? '',
         messageType: message.message_type,
-        contentText: text,
+        contentText: redactSensitiveText(text),
         mentions: JSON.stringify(mentionPairs),
         rootId: message.root_id ?? message.parent_id ?? '',
         replyDepth,
@@ -120,7 +128,7 @@ export class DispatcherService {
       .select()
       .from(connector)
       .where(eq(connector.id, connectionId));
-    await this.processStoredEvent(inserted, conn ?? null);
+    await this.processStoredEvent(inserted, conn ?? null, text);
   }
 
   async processUnprocessed(limit = 50): Promise<number> {
@@ -146,6 +154,7 @@ export class DispatcherService {
   private async processStoredEvent(
     event: typeof messageEvent.$inferSelect,
     conn: typeof connector.$inferSelect | null,
+    rawText?: string,
   ): Promise<void> {
     try {
       const connectionId = event.connectionId;
@@ -160,7 +169,7 @@ export class DispatcherService {
       }
       const mentions = mentionPairs.map((p) => p.openId);
       const baseInput: SimulationInput = {
-        messageText: event.contentText,
+        messageText: rawText ?? event.contentText,
         sender: event.senderOpenId,
         senderRole: 'member' as SenderRole,
         mentions,
@@ -285,9 +294,9 @@ export class DispatcherService {
     const { ruleRow, config, result, mentionNameMap } = args;
     const assigneeOpenIdRaw = args.assigneeOpenId;
     const assigneeMode = config.assignee?.mode ?? '';
-    const usableModes = ['mention', 'sender', 'mention_first_else_sender'];
+    const usableModes = ['mention', 'sender', 'mention_first_else_sender', 'static', 'external_map'];
     const hasUsableAssignee =
-      usableModes.includes(assigneeMode) && assigneeOpenIdRaw !== '';
+      usableModes.includes(assigneeMode) && looksLikeOpenId(assigneeOpenIdRaw);
     const assigneeOpenId = hasUsableAssignee ? assigneeOpenIdRaw : '';
     const assigneeName = mentionNameMap[assigneeOpenId] ?? '';
     const dueAt = result.dueAt !== '' ? new Date(result.dueAt) : null;
@@ -303,8 +312,9 @@ export class DispatcherService {
         connectionId: args.connectionId,
         messageEventId: args.messageEventId,
         messageId: args.messageId,
-        status:
-          sourceReadOnlyViolation || !hasUsableAssignee ? 'needs_review' : 'pending',
+        status: config.executionMode === 'shadow'
+          ? 'cancelled'
+          : sourceReadOnlyViolation || !hasUsableAssignee ? 'needs_review' : 'pending',
         dedupKey: config.assignee?.multiMode === 'one_per_assignee'
           ? `${result.dedupKey}:${assigneeOpenId}` : result.dedupKey,
         clientToken: randomUUID(),
@@ -327,11 +337,13 @@ export class DispatcherService {
         notifyAttempts: 0,
         retryCount: 0,
         nextRetryAt: null,
-        lastError: sourceReadOnlyViolation
+        lastError: config.executionMode === 'shadow'
+          ? '影子模式：仅记录命中结果，不创建真实待办或发送通知'
+          : sourceReadOnlyViolation
           ? '通知群与来源群相同，来源群只读，平台严禁向来源群发送任何消息，请把结果通知群改为其他群'
           : hasUsableAssignee
             ? ''
-            : '未能解析出可用的飞书负责人 open_id：当前负责人策略基于静态名单/映射表，真实执行请改用「被@人 / 发送者 / @一人优先否则发送者」策略',
+            : '未能解析出可用的飞书负责人 open_id；负责人必须是 ou_ 开头的真实 open_id',
         leaseOwner: '',
         leaseExpiresAt: null,
         isDemo: false,

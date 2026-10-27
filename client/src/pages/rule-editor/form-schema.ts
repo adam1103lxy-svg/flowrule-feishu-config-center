@@ -46,6 +46,7 @@ export const conditionFormSchema = z
       .number({ message: '请输入有效数字' })
       .int('需为整数')
       .min(0, '回复链深度不能为负'),
+    mentionIds: z.array(z.string()),
   })
   .superRefine((c, ctx) => {
     if (c.type === 'keyword' && c.keywords.length === 0) {
@@ -145,6 +146,7 @@ export const ruleFormSchema = z
     contextMode: z.enum(['current', 'root', 'thread']),
     contextDepth: z.number().int().min(1).max(20),
     allowSourceGroupNotification: z.boolean(),
+    executionMode: z.enum(['live', 'shadow']),
     taskTitleTemplate: z.string().min(1, '请输入待办标题模板'),
     taskDescTemplate: z.string(),
     dedupFields: z.array(z.enum(DEDUP_FIELDS)),
@@ -286,6 +288,7 @@ export const createEmptyCondition = (): RuleConditionFormValues => ({
   senderRole: 'any',
   messageType: 'any',
   replyDepth: 0,
+  mentionIds: [],
 });
 
 export const createDefaultFormValues = (): RuleFormValues => ({
@@ -326,6 +329,7 @@ export const createDefaultFormValues = (): RuleFormValues => ({
   contextMode: 'current',
   contextDepth: 5,
   allowSourceGroupNotification: false,
+  executionMode: 'live',
   taskTitleTemplate: '{{rule_name}}',
   taskDescTemplate: '',
   dedupFields: [],
@@ -342,6 +346,7 @@ const toConditionFormValues = (c: RuleCondition): RuleConditionFormValues => ({
   senderRole: c.senderRole ?? 'any',
   messageType: c.messageType ?? 'any',
   replyDepth: c.replyDepth ?? 0,
+  mentionIds: c.mentionIds ?? [],
 });
 
 export const buildFormValues = (rule: Rule): RuleFormValues => ({
@@ -403,6 +408,7 @@ export const buildFormValues = (rule: Rule): RuleFormValues => ({
   contextMode: rule.config.contextMode ?? 'current',
   contextDepth: rule.config.contextDepth ?? 5,
   allowSourceGroupNotification: rule.config.allowSourceGroupNotification ?? false,
+  executionMode: rule.config.executionMode ?? 'live',
   taskTitleTemplate: rule.config.taskTitleTemplate ?? '',
   taskDescTemplate: rule.config.taskDescTemplate ?? '',
   dedupFields: rule.config.dedupFields ?? [],
@@ -421,6 +427,7 @@ const toRuleCondition = (c: RuleConditionFormValues): RuleCondition => {
   if (type === 'message_type')
     return { type, messageType: c.messageType as MessageType };
   if (type === 'reply_depth') return { type, replyDepth: c.replyDepth };
+  if (type === 'must_mention') return { type, mentionIds: c.mentionIds };
   return { type };
 };
 
@@ -520,5 +527,6 @@ export const buildRuleConfig = (data: RuleFormValues): RuleConfig => {
     contextMode: data.contextMode,
     contextDepth: data.contextDepth,
     allowSourceGroupNotification: data.allowSourceGroupNotification,
+    executionMode: data.executionMode,
   };
 };

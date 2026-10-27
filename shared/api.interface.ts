@@ -288,6 +288,7 @@ export interface RuleCondition {
   senderRole?: SenderRole;
   messageType?: MessageType;
   replyDepth?: number;
+  mentionIds?: string[];
 }
 
 export interface RuleConditionGroup {
@@ -360,6 +361,8 @@ export interface RuleConfig {
   contextMode?: ContextMode;
   contextDepth?: number;
   allowSourceGroupNotification?: boolean;
+  executionMode?: 'live' | 'shadow';
+  sensitivePatterns?: string[];
 }
 
 /* ===== 实体 ===== */

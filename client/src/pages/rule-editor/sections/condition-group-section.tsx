@@ -2,6 +2,7 @@ import { useFieldArray } from 'react-hook-form';
 import { Plus, Trash2 } from 'lucide-react';
 import {
   FormControl,
+  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -183,9 +184,11 @@ const ConditionGroupSection = ({ form, fieldName }: ConditionGroupSectionProps) 
               ) : null}
 
               {type === 'must_mention' ? (
-                <p className="flex-1 self-end pb-2 text-sm text-muted-foreground">
-                  消息中包含 @ 时命中（无参数）。
-                </p>
+                <FormField control={form.control} name={`${fieldName}.conditions.${index}.mentionIds`} render={({ field }) => (
+                  <FormItem className="min-w-[260px] flex-1"><FormLabel>指定人员 open_id（可选）</FormLabel><FormControl>
+                    <TagsInput value={field.value} onChange={field.onChange} placeholder="ou_xxx；留空表示任意 @" ariaLabel="指定必须@人员 open_id" />
+                  </FormControl><FormDescription>填写后必须 @ 全部指定人员；留空只要求消息含任意 @。</FormDescription><FormMessage /></FormItem>
+                )} />
               ) : null}
 
               {type === 'message_type' ? (
