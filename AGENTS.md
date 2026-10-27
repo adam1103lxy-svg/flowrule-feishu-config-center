@@ -1,15 +1,22 @@
 # FlowRule 飞书规则配置中心
 
 ## 应用定位
-飞书群消息规则的配置、版本、模拟测试与对外接入平台。**不是**飞书任务执行器：接入方运行时负责订阅飞书消息、拉取已发布规则、执行任务 API、回写结果；本平台提供配置、发布、测试和审计。
+飞书群消息规则的 SaaS 闭环平台：用户在连接中心完成飞书应用授权后，平台自身实时监听来源群消息，按已发布规则在 run_at 到期时自动调用飞书 Task v2 创建待办、回读核验、并向结果通知群发送待办链接。外部拉取 API / 导出 JSON 仅作为可选扩展。
 
 ## 数据边界（已定）
-所有数据（workspace、connector、rule、rule_version、simulation_run、audit_log）存应用内 PostgreSQL，服务端持久化，跨会话共享。首次访问时后端自动种子匿名 Demo 数据。
+所有数据（workspace、connector、rule、rule_version、simulation_run、audit_log、message_event、task_run）存应用内 PostgreSQL，服务端持久化，跨会话共享。首次访问时后端自动种子匿名 Demo 数据，对已初始化库做幂等升级插入（如迁移规则草稿）。
 
 ## 技术架构
-- 后端：NestJS 单模块 `server/modules/flowrule/`（connectors / rules / versions / simulation / audit / workspace / integration 各自 controller+service，共享 `simulation` 引擎与 `seed` 服务）
+- 后端：NestJS 单模块 `server/modules/flowrule/`（connectors / rules / versions / simulation / audit / workspace / integration / runs 各自 controller+service；运行底座：feishu-client / feishu-events(WS长连接) / dispatcher / task-run / secret-box；`flowrule.automation.ts` 绑定两个 cron 触发器）
 - 前端：React 19 + react-query；页面在 `client/src/pages/<name>/`；API 封装在 `client/src/api/` 下按域拆分
 - 共享契约：`shared/api.interface.ts`（唯一类型来源，规则配置 `RuleConfig` 为 jsonb 存储）
+
+## 运行底座（SaaS 闭环核心）
+- 实时接收：连接器授权成功后启动飞书 WSClient 长连接（im.message.receive_v1）；停用/删除断开；周期补漏（cron flowrule_catchup_tick）重放 processed=false 事件
+- 调度：dispatcher 持久化 message_event → simulateRule 匹配 → 写 task_run（pending）并记审计；取消词命中则置 cancelled；启停不回放历史（processed 标记）
+- 执行：cron flowrule_runtime_tick 扫描到期记录，租约（lease_owner/lease_expires_at）防并发；幂等 client_token；创建 Task v2 → 回读核验 task_guid 与负责人 → 先存 task_guid（created）再发通知；通知成功存 notification_message_id；失败指数退避重试，最多后重试次数后进 needs_review
+- 状态机：pending / created / notify_pending / failed / needs_review / cancelled；运行中心可人工重试/取消
+- 凭证：App Secret 以 AES-256-GCM 加密存服务端（secret-box），接口只回 secretConfigured + authStatus(unverified/authorized/invalid) + discoveredChats；WS连接、Task v2、发消息、群列表均服务端直连飞书 OpenAPI
 
 ## API 一览
 - `GET /api/dashboard/stats` 工作台统计
@@ -42,9 +49,19 @@
 - 去重键：字段组合（message_id / object_key / rule_id / source 等）拼接
 - 发布校验阻断项：缺连接器、缺负责人策略、缺通知目标、缺去重键
 
+## 发布校验阻断项
+缺连接器 / 连接器未配置 Secret / 授权未验证 / 未启用 / 缺真实来源群 chat_id / 缺真实通知群 chat_id / 允许触发人缺 open_id / 缺触发条件 / 缺负责人策略 / 缺通知目标 / 缺去重键 / 缺任务标题 / 延迟与截止参数非法。
+
 ## 安全约束
-- 连接器不保存真实 Secret/Token：只存非敏感凭证引用 credentialRef（如 secret-manager://team/feishu-prod）；App ID 列表/日志/导出只给掩码，无明文凭证字段
-- 接入中心 API Key 只展示一次的产品说明，演示环境无真实密钥；接入方式为 2 可用（配置拉取 API /openapi/v1/published-config、导出 JSON）+ 1 扩展方案（发布 Webhook，未启用）
+- App Secret 仅在保存时 AES-256-GCM 加密存入服务端，接口/列表/日志/导出永不回传；App ID 掩码展示
+- 模拟测试不调用飞书、不创建真实任务；只有真实执行链路（cron 到期）调用飞书 OpenAPI
+- 接入中心 API Key 只展示一次的产品说明，演示环境无真实密钥；外部拉取 API / 导出 JSON 为可选扩展（发布 Webhook 未启用）
+
+## 触发器（平台 cron，仅发布后生效）
+- `flowrule_runtime_tick`（*/30 * * * *）：扫描到期 task_run 执行创建→核验→通知链路
+- `flowrule_catchup_tick`（15,45 * * * *）：错峰重放未处理 message_event + 兜底执行到期任务
 
 ## 环境备注
 - 演示数据全部匿名（人员用「成员A/成员B」等或测试 user_id 展示），模拟运行记录明确标识 Demo
+- 迁移规则「实际发布后24小时 · 崩溃与 ANR 检查」保持草稿：真实群 ID / open_id 未回填、连接器未真实授权前不得发布
+- 引擎回放测试：`npx -y tsx server/modules/flowrule/engine.replay.ts`（22 用例：正例/反例/重复/取消/去重/校验阻断）
