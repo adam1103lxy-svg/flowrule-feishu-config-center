@@ -280,6 +280,8 @@ export class DispatcherService {
     const assigneeOpenId = hasUsableAssignee ? assigneeOpenIdRaw : '';
     const assigneeName = mentionNameMap[assigneeOpenId] ?? '';
     const dueAt = result.dueAt !== '' ? new Date(result.dueAt) : null;
+    const sourceReadOnlyViolation =
+      config.notifyChatId !== '' && config.notifyChatId === args.chatId;
     const [inserted] = await this.db
       .insert(taskRun)
       .values({
@@ -289,7 +291,8 @@ export class DispatcherService {
         connectionId: args.connectionId,
         messageEventId: args.messageEventId,
         messageId: args.messageId,
-        status: hasUsableAssignee ? 'pending' : 'needs_review',
+        status:
+          sourceReadOnlyViolation || !hasUsableAssignee ? 'needs_review' : 'pending',
         dedupKey: result.dedupKey,
         clientToken: randomUUID(),
         assigneeOpenId,
@@ -310,9 +313,11 @@ export class DispatcherService {
         notifyAttempts: 0,
         retryCount: 0,
         nextRetryAt: null,
-        lastError: hasUsableAssignee
-          ? ''
-          : '未能解析出可用的飞书负责人 open_id：当前负责人策略基于静态名单/映射表，真实执行请改用「被@人 / 发送者 / @一人优先否则发送者」策略',
+        lastError: sourceReadOnlyViolation
+          ? '通知群与来源群相同，来源群只读，平台严禁向来源群发送任何消息，请把结果通知群改为其他群'
+          : hasUsableAssignee
+            ? ''
+            : '未能解析出可用的飞书负责人 open_id：当前负责人策略基于静态名单/映射表，真实执行请改用「被@人 / 发送者 / @一人优先否则发送者」策略',
         leaseOwner: '',
         leaseExpiresAt: null,
         isDemo: false,

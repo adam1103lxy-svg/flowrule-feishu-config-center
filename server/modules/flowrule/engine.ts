@@ -625,6 +625,12 @@ export const validateRuleConfig = (config: RuleConfig): ValidationResult => {
   if (!config.action) issues.push('缺少执行动作（需配置「创建飞书待办」）');
   if (!config.sourceChatId.trim()) issues.push('缺少来源消息群的真实 chat_id');
   if (!config.notifyChatId.trim()) issues.push('缺少创建结果通知群的真实 chat_id');
+  if (
+    config.sourceChatId.trim() &&
+    config.notifyChatId.trim() &&
+    config.notifyChatId === config.sourceChatId
+  )
+    issues.push('通知群不能与来源群相同：来源群只读，平台严禁向来源群发送任何消息');
   if (config.trigger.conditions.length === 0) issues.push('缺少触发条件');
   if (!config.assignee) issues.push('缺少负责人策略');
   if (config.notifyTargets.length === 0) issues.push('缺少通知目标');

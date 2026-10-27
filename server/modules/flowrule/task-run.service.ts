@@ -360,6 +360,25 @@ export class TaskRunService {
     client: import('@larksuiteoapi/node-sdk').Client,
   ): Promise<void> {
     if (row.notifyChatId === '') return;
+    if (row.notifyChatId === row.sourceChatId) {
+      await this.db
+        .update(taskRun)
+        .set({
+          status: 'needs_review',
+          lastError: '通知群与来源群相同，来源群只读，已拦截本次发送',
+          leaseExpiresAt: null,
+          updatedAt: new Date(),
+        })
+        .where(eq(taskRun.id, row.id));
+      await this.auditService.write({
+        action: 'task_failed',
+        entityType: 'task_run',
+        entityId: row.id,
+        entityName: row.taskTitle,
+        summary: `已拦截向来源群「${row.sourceChatName || row.sourceChatId}」发送结果通知：来源群只读`,
+      });
+      return;
+    }
     const taskUrl = row.taskGuid !== '' ? `https://feishu.cn/task?guid=${row.taskGuid}` : '';
     const text = [
       '【FlowRule】规则已创建飞书待办',

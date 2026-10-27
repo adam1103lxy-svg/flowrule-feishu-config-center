@@ -445,7 +445,7 @@ export const buildRuleConfig = (data: RuleFormValues): RuleConfig => {
 
   const notifyTargets: NotifyTarget[] = data.notifyChatId.trim()
     ? [{ type: 'notify_group', value: data.notifyChatId.trim() }]
-    : [{ type: 'source_group' }];
+    : [];
 
   return {
     sourceConnectorId: data.sourceConnectorId || null,

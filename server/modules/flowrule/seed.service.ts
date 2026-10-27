@@ -230,6 +230,51 @@ const DEMO_RULES: SeedRuleDef[] = [
     },
   },
   {
+    name: 'FlowRule 闭环测试 · 端到端验证',
+    code: 'e2e_closed_loop_test',
+    description:
+      '真实闭环端到端验证专用规则：命中含「FlowRule 闭环测试」的来源群消息后，立即创建一条无截止时间的真实飞书待办，负责人为被@人（无@时为消息发送者），结果仅通知「迭代CheckList」。完成真实授权并回填两个群的真实 chat_id 后发布使用；严禁把来源群设为通知群。',
+    type: 'e2e_test',
+    status: 'draft',
+    config: {
+      ...baseConfig,
+      taskTitleTemplate:
+        '【FlowRule 闭环测试】{{object_key}} {{object_version}} 端到端验证待办',
+      taskDescTemplate:
+        'FlowRule 闭环测试：由规则「{{rule_name}}」自动创建。应用 {{object_key}} 版本 {{object_version}}，来源群 {{source_group}}。本待办为端到端验证创建，无截止时间。',
+      sourceConnectorId: 'PLACEHOLDER_PROD',
+      sourceGroups: ['Swift-产品'],
+      sourceChatId: '',
+      sourceChatName: 'Swift-产品',
+      notifyChatId: '',
+      notifyChatName: '迭代CheckList',
+      action: 'create_task',
+      allowedSenders: [],
+      trigger: {
+        match: 'all',
+        conditions: [
+          triggerCond('keyword', { keywords: ['FlowRule 闭环测试'] }),
+        ],
+      },
+      exclusions: { match: 'any', conditions: [] },
+      extraction: {
+        objectLabel: '应用',
+        objectPattern: '应用[:：]\\s*([\\w-]+)',
+        versionPattern: '版本[:：]\\s*(v\\d+\\.\\d+\\.\\d+)',
+        releaseRatioPattern: '(?:发布比例|放量)[:：]?\\s*(\\d+%)',
+      },
+      assignee: { mode: 'mention_first_else_sender' },
+      timing: { mode: 'immediate' },
+      dueAt: null,
+      notifyTargets: [{ type: 'notify_group', value: '迭代CheckList' }],
+      dedupFields: ['object_key', 'object_version', 'rule_id', 'message_id'],
+      cancelWords: ['取消闭环测试'],
+      cancelScope: 'rule',
+      failureAction: 'pending_confirm',
+      retryCount: 2,
+    },
+  },
+  {
     name: '实际发布后24小时 · 崩溃与 ANR 检查',
     code: 'crash_anr_check_24h',
     description:
@@ -384,7 +429,48 @@ export class SeedService {
     if (!this.migrateChecked) {
       this.migrateChecked = true;
       await this.ensureMigratedRule();
+      await this.ensureE2eTestRule();
     }
+  }
+
+  private async ensureE2eTestRule(): Promise<void> {
+    const existing = await this.db
+      .select()
+      .from(rule)
+      .where(eq(rule.code, 'e2e_closed_loop_test'));
+    if (existing.length > 0) return;
+    const [prodConnector] = await this.db
+      .select()
+      .from(connector)
+      .where(eq(connector.environment, 'prod'));
+    const def = DEMO_RULES.find((d) => d.code === 'e2e_closed_loop_test');
+    if (!def || !prodConnector) return;
+    const config = { ...def.config };
+    if (config.sourceConnectorId === 'PLACEHOLDER_PROD') {
+      config.sourceConnectorId = prodConnector.id;
+    }
+    await this.db.insert(rule).values({
+      name: def.name,
+      code: def.code,
+      description: def.description,
+      type: def.type,
+      status: 'draft',
+      currentVersion: 0,
+      config: JSON.stringify(config),
+      createdBy: null,
+      updatedBy: null,
+    });
+    await this.db.insert(auditLog).values({
+      action: 'rule_created',
+      entityType: 'rule',
+      entityId: def.code,
+      entityName: def.name,
+      summary: `插入「FlowRule 闭环测试」草稿规则：真实授权并回填真实群 chat_id 后用于端到端验证（仅通知迭代CheckList，来源群只读）`,
+      detail: '',
+      isDemo: false,
+      createdBy: null,
+    });
+    this.logger.log('已插入闭环测试规则 e2e_closed_loop_test');
   }
 
   private async ensureMigratedRule(): Promise<void> {
