@@ -93,4 +93,4 @@ npx -y tsx server/modules/flowrule/engine.replay.ts
 
 ## 已验证闭环（2026-10-27）
 
-受控线上测试选择“用户身份”，以测试消息触发一条真实待办；平台成功创建并回读任务 GUID，向指定测试通知群发送结果消息，运行记录显示 `execution_identity=user`、`status=created`、`retry_count=0`。测试未向来源群发送任何消息。飞书应用 1.0.8 已于 2026-10-27 14:17 发布，生产连接器已切换为应用身份并通过授权校验；该配置校验不等于真实 Task v2 闭环，应用身份端到端结果仍须以获准来源消息触发后的任务回读与通知记录为准。
+用户身份与应用身份均已完成受控线上端到端验证。应用身份测试仅使用获准的来源群「迭代CheckList」和结果群「FlowRule E2E测试群」：规则 v2 命中消息 `om_x100b6132477718b4ce3f09d8a353477` 后，平台通过飞书 Task v2 创建并回读真实待办，`task_guid=a802afd8-404c-45e5-b37b-e4799a1527e7`，运行中心显示 `execution_identity=app`、`status=created`，通知消息 ID 为 `om_x100b61320bb8acaccfc75e59f21c183`；负责人、截止时间、真实 applink、来源消息 ID 与测试群通知逐项一致。测试未向 Swift-产品或其他未授权业务群发送消息。
