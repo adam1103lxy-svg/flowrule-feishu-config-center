@@ -1,0 +1,247 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "FlowRule 飞书规则配置中心 OpenAPI",
+    "description": "面向接入方运行时的只读接入接口：拉取已发布规则配置、获取发布配置 JSON Schema、对统一消息事件做确定性模拟评估。鉴权方式为妙搭 Open API Key Bearer（由应用管理员在妙搭平台「开放 API Key 管理」中创建并绑定本应用；原始 Key 仅展示一次，本应用界面不管理密钥）。所有接口不包含连接器 Secret/Token 或任何明文凭证。模拟接口由确定性规则引擎本地评估：不调用飞书、不创建真实任务。",
+    "version": "1.0.0"
+  },
+  "servers": [{ "url": "/" }],
+  "tags": [
+    {
+      "name": "integration",
+      "description": "接入方配置拉取与模拟测试"
+    }
+  ],
+  "paths": {
+    "/openapi/v1/published-config": {
+      "get": {
+        "tags": ["integration"],
+        "operationId": "getPublishedConfig",
+        "summary": "拉取当前工作区全部已发布规则配置",
+        "description": "返回当前工作区名称、导出时间（exportedAt）与全部状态为已发布的规则配置（code / name / type / version / config）。响应不包含连接器 Secret/Token 或任何明文凭证。",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "发布配置",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PublishedConfig" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/TooManyRequests" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
+    "/openapi/v1/schema": {
+      "get": {
+        "tags": ["integration"],
+        "operationId": "getSchema",
+        "summary": "获取发布配置 JSON Schema",
+        "description": "返回发布配置的 JSON Schema（draft-07），接入方可用其校验 /openapi/v1/published-config 拉取到的配置结构。",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "JSON Schema（draft-07）",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/TooManyRequests" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
+    "/openapi/v1/simulate": {
+      "post": {
+        "tags": ["integration"],
+        "operationId": "simulate",
+        "summary": "按 ruleCode 对统一消息事件做确定性模拟评估",
+        "description": "输入统一消息事件与 ruleCode，使用与平台模拟测试台相同的确定性规则引擎返回模拟决策。不调用飞书、不创建真实任务；每次成功调用会保存一条 isDemo=true 的模拟运行记录与审计记录。",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/SimulateRequest" },
+              "example": {
+                "ruleCode": "manual_assign_v1",
+                "event": {
+                  "messageId": "om_8f2c1a",
+                  "messageText": "@成员A 帮我提单，工单号：SR-10231，版本 v2.3.0",
+                  "sender": "member_b",
+                  "senderRole": "member",
+                  "mentions": ["member_a"],
+                  "sentAt": "2026-10-26T09:30:00+08:00",
+                  "replyDepth": 0,
+                  "sourceGroup": "客服支持群",
+                  "messageType": "text"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "模拟决策结果",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SimulateResponse" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/TooManyRequests" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "妙搭 Open API Key。由应用管理员在妙搭平台「开放 API Key 管理」中创建并绑定本应用；原始 Key 仅创建时展示一次，本应用界面不管理密钥。"
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "参数非法（如 ruleCode 为空、事件结构不可解析）"
+      },
+      "Unauthorized": {
+        "description": "Open API Key 缺失或无效，不会回退到匿名访问"
+      },
+      "NotFound": {
+        "description": "ruleCode 对应的规则不存在"
+      },
+      "TooManyRequests": {
+        "description": "触发限流，退避后重试"
+      },
+      "ServerError": {
+        "description": "服务内部错误，记录 traceid 后稍后重试"
+      }
+    },
+    "schemas": {
+      "PublishedConfig": {
+        "type": "object",
+        "required": ["exportedAt", "workspace", "rules"],
+        "properties": {
+          "exportedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "导出时间（ISO 8601）"
+          },
+          "workspace": {
+            "type": "string",
+            "description": "当前工作区名称"
+          },
+          "rules": {
+            "type": "array",
+            "description": "全部已发布规则",
+            "items": { "$ref": "#/components/schemas/PublishedRule" }
+          }
+        }
+      },
+      "PublishedRule": {
+        "type": "object",
+        "required": ["code", "name", "type", "version", "config"],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "规则唯一标识（ruleCode）"
+          },
+          "name": { "type": "string", "description": "规则名称" },
+          "type": {
+            "type": "string",
+            "enum": [
+              "manual_assign",
+              "account_config",
+              "submission_review",
+              "publish",
+              "check_24h",
+              "retrospective_72h",
+              "custom"
+            ],
+            "description": "规则类型"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "发布版本号"
+          },
+          "config": {
+            "type": "object",
+            "description": "规则语义配置（触发条件、排除条件、提取、负责人策略、执行时机、通知目标、去重键、取消词等），完整结构见 GET /openapi/v1/schema"
+          }
+        }
+      },
+      "SimulateRequest": {
+        "type": "object",
+        "required": ["ruleCode", "event"],
+        "properties": {
+          "ruleCode": {
+            "type": "string",
+            "description": "要模拟的规则唯一标识"
+          },
+          "event": {
+            "type": "object",
+            "description": "统一消息事件（与平台模拟测试台一致）",
+            "required": ["messageText"],
+            "properties": {
+              "messageId": { "type": "string" },
+              "messageText": { "type": "string" },
+              "sender": { "type": "string" },
+              "senderRole": {
+                "type": "string",
+                "enum": ["member", "admin", "bot", "any"]
+              },
+              "mentions": { "type": "array", "items": { "type": "string" } },
+              "sentAt": { "type": "string", "format": "date-time" },
+              "replyDepth": { "type": "integer", "minimum": 0 },
+              "sourceGroup": { "type": "string" },
+              "messageType": {
+                "type": "string",
+                "enum": ["text", "post", "file", "image", "any"]
+              }
+            }
+          }
+        }
+      },
+      "SimulateResponse": {
+        "type": "object",
+        "required": ["ruleCode", "ruleName", "ruleVersion", "isDemo", "note", "decision"],
+        "properties": {
+          "ruleCode": { "type": "string", "description": "模拟的规则标识" },
+          "ruleName": { "type": "string", "description": "规则名称" },
+          "ruleVersion": {
+            "type": "integer",
+            "description": "规则当前版本号（草稿为 0）"
+          },
+          "isDemo": {
+            "type": "boolean",
+            "description": "恒为 true：OpenAPI 模拟记录标记为演示来源"
+          },
+          "note": {
+            "type": "string",
+            "description": "说明：不调用飞书、不创建真实任务"
+          },
+          "decision": {
+            "type": "object",
+            "description": "决策结果：matched、matchedConditions、excluded、extractionReason、assignees、runAt、dueAt、dedupKey、notifyTargets、taskTitle、taskDesc、cancelMatched、failureAction、retryCount 等",
+            "properties": {
+              "matched": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    }
+  }
+}
